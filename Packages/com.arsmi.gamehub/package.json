@@ -4,8 +4,8 @@
   "displayName": "Arsmi Games GameHub SDK",
   "description": "Everything a Unity WebGL game needs to talk to the Arsmi Games platform: the postMessage bridge, save data across the three published save modes, wallet, rewarded ads, achievements, leaderboards, and a WebGL build that cannot ship without the SDK in it.",
   "unity": "2021.3",
-  "documentationUrl": "https://github.com/Arsmi-17/com.arsmi.gamehub",
-  "changelogUrl": "https://github.com/Arsmi-17/com.arsmi.gamehub/blob/main/CHANGELOG.md",
+  "documentationUrl": "https://github.com/Arsmi-17/ArsmiGames_SDK/blob/main/Packages/com.arsmi.gamehub/README.md",
+  "changelogUrl": "https://github.com/Arsmi-17/ArsmiGames_SDK/blob/main/Packages/com.arsmi.gamehub/CHANGELOG.md",
   "keywords": [
     "arsmi",
     "gamehub",
