@@ -1,0 +1,18 @@
+{
+    "name": "Arsmi.GameHub.Editor",
+    "rootNamespace": "ArsmiGames.EditorTools",
+    "references": [
+        "Arsmi.GameHub.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

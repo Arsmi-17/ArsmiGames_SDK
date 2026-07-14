@@ -1,0 +1,33 @@
+{
+  "name": "com.arsmi.gamehub",
+  "version": "1.0.0",
+  "displayName": "Arsmi Games GameHub SDK",
+  "description": "Everything a Unity WebGL game needs to talk to the Arsmi Games platform: the postMessage bridge, save data across the three published save modes, wallet, rewarded ads, achievements, leaderboards, and a WebGL build that cannot ship without the SDK in it.",
+  "unity": "2021.3",
+  "documentationUrl": "https://github.com/Arsmi-17/com.arsmi.gamehub",
+  "changelogUrl": "https://github.com/Arsmi-17/com.arsmi.gamehub/blob/main/CHANGELOG.md",
+  "keywords": [
+    "arsmi",
+    "gamehub",
+    "webgl",
+    "html5",
+    "sdk",
+    "leaderboard",
+    "achievements"
+  ],
+  "author": {
+    "name": "Arsmi Games"
+  },
+  "dependencies": {
+    "com.unity.modules.unitywebrequest": "1.0.0",
+    "com.unity.modules.audio": "1.0.0",
+    "com.unity.ugui": "1.0.0"
+  },
+  "samples": [
+    {
+      "displayName": "Kids Quiz Demo",
+      "description": "A small quiz that exercises every SDK call: all three save modes, a rewarded ad, wallet, achievements, leaderboards, and a live log of everything crossing the bridge. Import it, then open Scenes/ArsmiSdkDemo.",
+      "path": "Samples~/KidsQuizDemo"
+    }
+  ]
+}

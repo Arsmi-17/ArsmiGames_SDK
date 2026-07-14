@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <title>{{{ PRODUCT_NAME }}}</title>
+
+    <!--
+      The platform SDK. Without it the game cannot talk to Arsmi Games at all:
+      GameHubBridge.jslib only wires itself up if window.GameHubSDK already exists,
+
+          if (!window.GameHubBridge && window.GameHubSDK) { ...create... }
+
+      so with no SDK on the page, window.GameHubBridge is never created, every Emit
+      from C# is a silent no-op, and no listeners are installed. The game neither
+      sends nor receives anything — and nothing errors to tell you why.
+
+      Two sources, in order:
+
+      1. /sdk/gamehub-sdk.js — the platform's own copy, always current. This only
+         resolves when the platform is serving the build (/unity/<slug>/...), because
+         the path is absolute.
+
+      2. gamehub-sdk.js — the copy that ships inside this build. Needed because a
+         build hosted ANYWHERE else (a static host, Cloudflare Pages, file://) would
+         resolve the absolute path against that host and get a 404.
+
+      document.write is deliberate: it is synchronous, so the SDK is guaranteed to be
+      defined before the Unity loader runs. C# Awake() calls straight into the bridge,
+      so "eventually loaded" is not good enough.
+    -->
+    <script src="/sdk/gamehub-sdk.js"></script>
+    <script>
+      if (!window.GameHubSDK) {
+        document.write('<script src="gamehub-sdk.js"><\/script>');
+      }
+    </script>
+
+    <style>
+      html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000}
+      #unity-container{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden}
+      #unity-canvas{display:block;width:100%!important;height:100%!important;background:#000}
+      #unity-loading-bar{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:none}
+      #unity-progress-bar-empty{width:200px;height:6px;background:#1c1b20;border-radius:3px;overflow:hidden}
+      #unity-progress-bar-full{width:0;height:100%;background:#cc785c}
+      #unity-footer{display:none!important}
+      #unity-warning{position:absolute;left:50%;top:5%;transform:translate(-50%);background:#000;color:#fff}
+    </style>
+  </head>
+  <body>
+    <div id="unity-container">
+      <canvas id="unity-canvas" width={{{ WIDTH }}} height={{{ HEIGHT }}} tabindex="-1"></canvas>
+      <div id="unity-loading-bar">
+        <div id="unity-progress-bar-empty">
+          <div id="unity-progress-bar-full"></div>
+        </div>
+      </div>
+      <div id="unity-warning"></div>
+      <div id="unity-footer"></div>
+    </div>
+
+    <script>
+      var canvas = document.querySelector("#unity-canvas");
+
+      // Report engine progress to the platform. Without this it can only see the
+      // iframe's load event, which fires long before the wasm has downloaded and
+      // compiled — so it would hide its loading screen and leave the player
+      // staring at a black frame until Unity finally paints.
+      function postToPlatform(type, payload) {
+        try {
+          if (window.parent && window.parent !== window) {
+            var msg = { type: type, ts: Date.now(), version: 1 };
+            for (var k in (payload || {})) msg[k] = payload[k];
+            window.parent.postMessage(msg, "*");
+          }
+        } catch (e) { /* not embedded, or blocked */ }
+      }
+      postToPlatform("gamehub:unity:progress", { progress: 0 });
+
+      function unityShowBanner(msg, type) {
+        var warningBanner = document.querySelector("#unity-warning");
+        function updateBannerVisibility() {
+          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+        }
+        var div = document.createElement('div');
+        div.innerHTML = msg;
+        warningBanner.appendChild(div);
+        if (type == 'error') div.style = 'background: red; padding: 10px;';
+        else {
+          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
+          setTimeout(function () {
+            warningBanner.removeChild(div);
+            updateBannerVisibility();
+          }, 5000);
+        }
+        updateBannerVisibility();
+      }
+
+      var buildUrl = "Build";
+      var loaderUrl = buildUrl + "/{{{ LOADER_FILENAME }}}";
+      var config = {
+        arguments: [],
+        dataUrl: buildUrl + "/{{{ DATA_FILENAME }}}",
+        frameworkUrl: buildUrl + "/{{{ FRAMEWORK_FILENAME }}}",
+#if USE_THREADS
+        workerUrl: buildUrl + "/{{{ WORKER_FILENAME }}}",
+#endif
+#if USE_WASM
+        codeUrl: buildUrl + "/{{{ CODE_FILENAME }}}",
+#endif
+#if MEMORY_FILENAME
+        memoryUrl: buildUrl + "/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+        symbolsUrl: buildUrl + "/{{{ SYMBOLS_FILENAME }}}",
+#endif
+        streamingAssetsUrl: "StreamingAssets",
+        companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+        productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+        productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+        showBanner: unityShowBanner,
+        devicePixelRatio: Math.min(
+          (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+            (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) ? 1 : 2,
+          Math.max(1, window.devicePixelRatio || 1)
+        ),
+      };
+
+      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+        var meta = document.createElement('meta');
+        meta.name = 'viewport';
+        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
+        document.getElementsByTagName('head')[0].appendChild(meta);
+      }
+      canvas.style.width = "100%";
+      canvas.style.height = "100%";
+
+      document.querySelector("#unity-loading-bar").style.display = "block";
+      canvas.addEventListener('webglcontextlost', function (e) {
+        e.preventDefault();
+        unityShowBanner('WebGL context lost.', 'error');
+      });
+
+      var script = document.createElement("script");
+      script.src = loaderUrl;
+      script.onload = function () {
+        createUnityInstance(canvas, config, function (progress) {
+          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
+          postToPlatform("gamehub:unity:progress", { progress: progress });
+        }).then(function (unityInstance) {
+          document.querySelector("#unity-loading-bar").style.display = "none";
+          window.unityInstance = unityInstance;
+          postToPlatform("gamehub:unity:ready", {});
+        }).catch(function (message) {
+          postToPlatform("gamehub:unity:error", { error: String(message) });
+          unityShowBanner(message, 'error');
+        });
+      };
+      document.body.appendChild(script);
+    </script>
+  </body>
+</html>
