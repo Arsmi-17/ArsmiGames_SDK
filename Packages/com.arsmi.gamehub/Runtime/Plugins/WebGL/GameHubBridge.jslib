@@ -3,10 +3,28 @@ mergeInto(LibraryManager.library, {
     var gameObjectName = UTF8ToString(gameObjectNamePtr);
     window.__gameHubUnityReceiver = gameObjectName;
 
+    // Unity mode turns OFF the SDK's automatic wiring detection, and its automatic acks.
+    //
+    // Below, this file subscribes to set_mute, set_fullscreen and the rest on the game's
+    // behalf, unconditionally — it has to, it cannot know what the C# will want. If the SDK
+    // inferred "the game handles mute" from those subscriptions, EVERY Unity build would look
+    // compliant, including one whose C# ignores the platform's volume button completely. So
+    // GameHubBridge.cs looks at its own event subscriptions and reports the truth, through
+    // GameHubBridge_ReportWiring and GameHubBridge_Ack.
+    //
+    // It has to be done in BOTH branches. The WebGL template loads gamehub-sdk.js in <head>,
+    // so in a real build window.GameHubBridge is nearly always already here and the create()
+    // below never runs — which left every Unity build in auto-wiring mode, quietly reporting
+    // that it implemented everything.
+    //
+    // And it has to happen BEFORE the subscriptions below, or they are what gets counted.
     if (!window.GameHubBridge && window.GameHubSDK) {
       window.GameHubBridge = window.GameHubSDK.create({
-        capabilities: { challenge: true, pocketConsole: true, fullscreen: true, mute: true, achievements: true, leaderboard: true },
+        capabilities: { challenge: true, pocketConsole: true, fullscreen: true, mute: true, leaderboard: true },
+        engine: "unity",
       });
+    } else if (window.GameHubBridge && window.GameHubBridge.setEngine) {
+      window.GameHubBridge.setEngine("unity");
     }
 
     window.__gameHubUnitySend = function (method, payload) {
@@ -58,9 +76,6 @@ mergeInto(LibraryManager.library, {
       });
       window.GameHubBridge.pocket.onPlayerLeft(function (payload) {
         window.__gameHubUnitySend("OnGameHubPocketPlayerLeft", payload);
-      });
-      if (window.GameHubBridge.achievements && window.GameHubBridge.achievements.onSharing) window.GameHubBridge.achievements.onSharing(function (payload) {
-        window.__gameHubUnitySend("OnGameHubAchievementsSharing", payload);
       });
       if (window.GameHubBridge.leaderboard && window.GameHubBridge.leaderboard.onSharing) window.GameHubBridge.leaderboard.onSharing(function (payload) {
         window.__gameHubUnitySend("OnGameHubLeaderboardSharing", payload);
@@ -139,6 +154,29 @@ mergeInto(LibraryManager.library, {
     window.GameHubBridge && window.GameHubBridge.setMuted(!!muted);
   },
 
+  /**
+   * C# answering for a platform message this file handed it.
+   *
+   * The handlers above subscribe to set_mute and set_fullscreen unconditionally, so the SDK
+   * cannot tell from JavaScript whether the GAME is listening — only C# knows that. It parks
+   * the message id and waits for this call. See UNITY_ACKS in the SDK.
+   */
+  GameHubBridge_Ack: function (eventPtr, handled) {
+    var eventName = UTF8ToString(eventPtr);
+    if (!window.GameHubBridge || !window.GameHubBridge.ackEvent) return;
+    window.GameHubBridge.ackEvent(eventName, !!handled);
+  },
+
+  /** C# telling us what its game actually subscribed to. See engine:"unity" above. */
+  GameHubBridge_ReportWiring: function (jsonPtr) {
+    if (!window.GameHubBridge || !window.GameHubBridge.setWiring) return;
+    try {
+      window.GameHubBridge.setWiring(JSON.parse(UTF8ToString(jsonPtr)));
+    } catch (err) {
+      console.warn("[GameHubUnity] bad wiring report", err);
+    }
+  },
+
   GameHubBridge_ChallengeReady: function (jsonPtr) {
     var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
     window.GameHubBridge && window.GameHubBridge.challenge.ready(payload);
@@ -162,16 +200,6 @@ mergeInto(LibraryManager.library, {
   GameHubBridge_PocketSchema: function (jsonPtr) {
     var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
     window.GameHubBridge && window.GameHubBridge.pocket.setControllerSchema(payload);
-  },
-
-  GameHubBridge_AchievementsDefine: function (jsonPtr) {
-    var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
-    window.GameHubBridge && window.GameHubBridge.achievements && window.GameHubBridge.achievements.define(payload);
-  },
-
-  GameHubBridge_AchievementProgress: function (jsonPtr) {
-    var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
-    window.GameHubBridge && window.GameHubBridge.achievements && window.GameHubBridge.achievements.progress(payload);
   },
 
   GameHubBridge_LeaderboardDefine: function (jsonPtr) {

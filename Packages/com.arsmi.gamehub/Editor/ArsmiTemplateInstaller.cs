@@ -87,6 +87,19 @@ namespace ArsmiGames.EditorTools
             return wrote;
         }
 
+        /// <summary>
+        /// A file inside the package's template folder — the canonical copy, the one the build
+        /// verifies everything else against. Null if the package cannot be located.
+        /// </summary>
+        public static string PackageFile(string name)
+        {
+            var source = SourcePath();
+            if (source == null) return null;
+
+            var path = Path.Combine(source, name);
+            return File.Exists(path) ? path : null;
+        }
+
         /// <summary>True if the template is present in the project and matches the package.</summary>
         public static bool IsInstalled()
         {

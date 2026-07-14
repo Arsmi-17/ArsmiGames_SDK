@@ -10,13 +10,13 @@ public class GameHubBridge : MonoBehaviour
     [DllImport("__Internal")] private static extern void GameHubBridge_RequestFullscreen(string orientation);
     [DllImport("__Internal")] private static extern void GameHubBridge_RequestLogin(string reason);
     [DllImport("__Internal")] private static extern void GameHubBridge_SetMuted(int muted);
+    [DllImport("__Internal")] private static extern void GameHubBridge_ReportWiring(string json);
+    [DllImport("__Internal")] private static extern void GameHubBridge_Ack(string eventName, int handled);
     [DllImport("__Internal")] private static extern void GameHubBridge_ChallengeReady(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_ChallengeState(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_ChallengeResult(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_PocketReady(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_PocketSchema(string json);
-    [DllImport("__Internal")] private static extern void GameHubBridge_AchievementsDefine(string json);
-    [DllImport("__Internal")] private static extern void GameHubBridge_AchievementProgress(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_LeaderboardDefine(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_LeaderboardScore(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_DataSetItem(string key, string value);
@@ -40,6 +40,77 @@ public class GameHubBridge : MonoBehaviour
         DontDestroyOnLoad(gameObject);
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_Init(gameObject.name);
+#endif
+    }
+
+    private System.Collections.IEnumerator Start()
+    {
+        // Wait one frame. Every other Start() has run by then, so a game that subscribes in
+        // Start (most do) is counted. Reporting in our own Start would race them, and a game
+        // that had wired everything up correctly could be told it had not.
+        yield return null;
+        ReportWiring();
+    }
+
+    // ---- what this game actually wired up ---------------------------------------
+    //
+    // The platform will not publish a game that ignores the volume button or drops the
+    // player's save. It cannot tell that from the outside: the .jslib subscribes to every
+    // platform message on the game's behalf whether or not the C# does anything with them,
+    // so from JavaScript every Unity build looks compliant.
+    //
+    // Only C# knows the truth, and it is a simple truth: did the game attach a handler? A
+    // null event means nobody is listening, which means the platform's volume button does
+    // nothing and the player's progress goes nowhere.
+
+    private bool _usedSaveApi;
+
+    /// <summary>Tells the platform which requirements this game has actually implemented.
+    /// Called automatically after the first frame. Call it again yourself if you subscribe
+    /// to bridge events later than that.</summary>
+    public void ReportWiring()
+    {
+        var json =
+            "{" +
+            $"\"mute\":{Bool(OnMuteChanged != null)}," +
+            $"\"fullscreen\":{Bool(OnFullscreenChanged != null)}," +
+            $"\"data\":{Bool(OnDataChanged != null || _usedSaveApi)}," +
+            $"\"user\":{Bool(OnUserChanged != null)}," +
+            $"\"wallet\":{Bool(OnWalletChanged != null)}," +
+            $"\"ads\":{Bool(OnAdFinished != null)}," +
+            $"\"leaderboard\":{Bool(_definedLeaderboard)}" +
+            "}";
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_ReportWiring(json);
+#else
+        Debug.Log($"[GameHubBridge] wiring {json}");
+#endif
+    }
+
+    private bool _definedLeaderboard;
+
+    private static string Bool(bool value) => value ? "true" : "false";
+
+    // ---- Acknowledgements -------------------------------------------------------
+    //
+    // The platform sends set_mute and set_fullscreen and then waits to hear what happened.
+    // It has to: a game *receiving* a message and honouring it sends nothing back, so from
+    // the outside a game that mutes itself and a game that ignores the volume button look
+    // exactly the same.
+    //
+    // JavaScript cannot answer this for us. GameHubBridge.jslib subscribes to both events on
+    // the game's behalf whether or not this C# does anything with them, so a JS-side answer
+    // would say "handled" for every Unity build ever made. Only we can see the truth, and it
+    // is a simple one: a null event means nobody is listening.
+
+    /// <summary>Answers a platform message: did this game actually do anything with it?</summary>
+    private static void Ack(string eventName, bool handled)
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_Ack(eventName, handled ? 1 : 0);
+#else
+        Debug.Log($"[GameHubBridge] ack {eventName} handled={handled}");
 #endif
     }
 
@@ -113,6 +184,11 @@ public class GameHubBridge : MonoBehaviour
     /// <summary>The platform's volume button. Mute your AudioListener here.</summary>
     public void OnGameHubMuted(string json)
     {
+        // Answer first, and answer whether or not the state actually changes. The platform
+        // checks this game handles mute by sending the state it is already in — a probe that
+        // is silent to the player. Acking only on a change would report that game as broken.
+        Ack("set_mute", OnMuteChanged != null);
+
         var muted = ReadJsonBool(json, "muted");
         if (muted == IsMuted) return;
         IsMuted = muted;
@@ -128,9 +204,15 @@ public class GameHubBridge : MonoBehaviour
     // ---- Wallet -----------------------------------------------------------------
     //
     // Flux Coins are real currency, so the balance is whatever the SERVER says it is,
-    // never what the game says it is. Read it, and ask to spend it. Earning is not in
-    // here on purpose: coins come from rewarded ads and achievement claims, and the
-    // platform is the one that grants those.
+    // never what the game says it is.
+    //
+    // Read it, and ask to spend it. There is no way to add to it, and that is not an
+    // oversight: coins are bought from the platform, or granted by the platform for
+    // watching a PLATFORM ad or claiming an achievement the PLATFORM defined. A game that
+    // could add to the balance would be a game printing money.
+    //
+    // That includes rewarded ads your game asks for. They pay out in YOUR currency — clear
+    // the boss, unlock the skin — which your own code grants. They do not pay Flux.
 
     /// <summary>The last balance the platform sent. -1 until the first reply arrives.</summary>
     public int FluxCoins { get; private set; } = -1;
@@ -167,16 +249,9 @@ public class GameHubBridge : MonoBehaviour
         Emit("gamehub:wallet:spend", json);
     }
 
-    /// <summary>Sets an ABSOLUTE balance, trusted as-is — which means a game can mint
-    /// currency with it. Use <see cref="WalletSpend"/> to take coins; coins are earned
-    /// through rewarded ads and achievements, which the platform grants. Kept only so
-    /// already-published games keep working.</summary>
-    [System.Obsolete("Use WalletSpend. WalletSet lets a game set its own balance and will be removed.")]
-    public void WalletSet(double fluxCoins, string currency = "flux", double rate = 1, string game = "", string extraJson = "{}")
-    {
-        var json = $"{{\"currency\":\"{Escape(currency)}\",\"fluxCoins\":{Invariant(fluxCoins)},\"rate\":{Invariant(rate)},\"game\":\"{Escape(game)}\",\"extra\":{(string.IsNullOrEmpty(extraJson) ? "{}" : extraJson)}}}";
-        Emit("gamehub:wallet:set", json);
-    }
+    // WalletSet is gone. It wrote an absolute balance and was trusted as-is, so any game
+    // could mint currency with one call — and the platform now refuses the event outright.
+    // Take coins with WalletSpend. There is no counterpart that gives them.
 
     public void ChallengeReady(int maxPlayers, string mode = "ranked", bool ranked = true)
     {
@@ -219,32 +294,13 @@ public class GameHubBridge : MonoBehaviour
 #endif
     }
 
-    public void AchievementsDefine(string json)
-    {
-#if UNITY_WEBGL && !UNITY_EDITOR
-        GameHubBridge_AchievementsDefine(string.IsNullOrEmpty(json) ? "{\"achievements\":[]}" : json);
-#else
-        Debug.Log($"[GameHubBridge] AchievementsDefine {json}");
-#endif
-    }
-
-    public void AchievementProgressJson(string json)
-    {
-#if UNITY_WEBGL && !UNITY_EDITOR
-        GameHubBridge_AchievementProgress(string.IsNullOrEmpty(json) ? "{}" : json);
-#else
-        Debug.Log($"[GameHubBridge] AchievementProgress {json}");
-#endif
-    }
-
-    public void AchievementProgress(string metric, double amount = 1, string eventName = "", string metadataJson = "{}")
-    {
-        var json = $"{{\"metric\":\"{Escape(metric)}\",\"amount\":{Invariant(amount)},\"eventName\":\"{Escape(eventName)}\",\"metadata\":{(string.IsNullOrEmpty(metadataJson) ? "{}" : metadataJson)}}}";
-        AchievementProgressJson(json);
-    }
+    // Achievements were removed from the platform. Track them in your own game and reward the
+    // player in your own currency — that was already the only thing a game's achievements could
+    // do, since they were never worth any Flux.
 
     public void LeaderboardDefineJson(string json)
     {
+        _definedLeaderboard = true;
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_LeaderboardDefine(string.IsNullOrEmpty(json) ? "{}" : json);
 #else
@@ -306,6 +362,7 @@ public class GameHubBridge : MonoBehaviour
 
     public string GetItem(string key, string fallback = null)
     {
+        _usedSaveApi = true;
         return _saveData.TryGetValue(key ?? "", out var value) ? value : fallback;
     }
 
@@ -315,6 +372,7 @@ public class GameHubBridge : MonoBehaviour
 
     public void SetItem(string key, string value)
     {
+        _usedSaveApi = true;
         if (string.IsNullOrEmpty(key)) return;
         _saveData[key] = value ?? "";
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -529,12 +587,35 @@ public class GameHubBridge : MonoBehaviour
     public void OnGameHubChallengeLeaderboard(string json) => Debug.Log($"[GameHubBridge] Challenge leaderboard: {json}");
     public void OnGameHubChallengeEnd(string json) => Debug.Log($"[GameHubBridge] Challenge end: {json}");
     public void OnGameHubContext(string json) => Debug.Log($"[GameHubBridge] Context: {json}");
-    public void OnGameHubFullscreen(string json) => Debug.Log($"[GameHubBridge] Fullscreen: {json}");
+    /// <summary>True while the platform is showing the game fullscreen.</summary>
+    public bool IsFullscreen { get; private set; }
+
+    /// <summary>The platform entered or left fullscreen. Re-layout if your UI needs it.
+    /// Subscribing is what tells the platform you handle fullscreen at all.</summary>
+    public event System.Action<bool> OnFullscreenChanged;
+
+    public void OnGameHubFullscreen(string json)
+    {
+        Ack("set_fullscreen", OnFullscreenChanged != null);
+
+        var next = ReadJsonBool(json, "fullscreen");
+        if (next == IsFullscreen) return;
+        IsFullscreen = next;
+        OnFullscreenChanged?.Invoke(next);
+    }
     // ---- Ads --------------------------------------------------------------------
     //
     // Rewarded ads are a PLATFORM overlay, drawn over the game frame. The game does not
-    // render the ad, does not time it, and does not get to say whether it was watched —
-    // the reward is real currency, so that decision stays outside the iframe.
+    // render the ad, does not time it, and does not get to say whether it was watched — a
+    // game cannot be trusted to report that, so the decision stays outside the iframe.
+    //
+    // What the ad PAYS is entirely yours. An ad your game asked for grants no Flux Coins:
+    // you clear the boss level, you unlock the skin, you refill the lives — whatever your
+    // own economy says, granted by your own code when rewarded is true.
+    //
+    // (The platform has its own "watch an ad for Flux" button in its UI. That one belongs
+    // to the platform, the player starts it deliberately, and it has nothing to do with
+    // your game.)
     //
     // Pause and mute yourself when OnAdStarted fires; the platform will not do it for you
     // beyond muting the frame. Only pay out when OnAdFinished reports rewarded: true.
@@ -544,9 +625,12 @@ public class GameHubBridge : MonoBehaviour
 
     public event System.Action OnAdStarted;
 
-    /// <summary>rewarded, and the player's new Flux balance (-1 if unknown).
-    /// rewarded is false when the player skipped it or it failed — pay out nothing.</summary>
-    public event System.Action<bool, int> OnAdFinished;
+    /// <summary>The ad finished. true = the player watched it to the end, so grant whatever
+    /// YOUR game promised. false = they skipped it or it failed, so grant nothing.
+    ///
+    /// There is no balance here any more, because an ad your game asked for does not move
+    /// the player's Flux balance at all.</summary>
+    public event System.Action<bool> OnAdFinished;
 
     public void ShowRewardedAd(string placement = "game")
     {
@@ -570,11 +654,7 @@ public class GameHubBridge : MonoBehaviour
         }
 
         AdShowing = false;
-        var rewarded = status == "rewarded";
-        var balance = -1;
-        var raw = ReadJsonNumber(json, "balance");
-        if (raw.HasValue) balance = (int)raw.Value;
-        OnAdFinished?.Invoke(rewarded, balance);
+        OnAdFinished?.Invoke(status == "rewarded");
     }
 
     // ---- Player identity --------------------------------------------------------
@@ -627,7 +707,6 @@ public class GameHubBridge : MonoBehaviour
     public void OnGameHubPocketPlayerJoined(string json) => Debug.Log($"[GameHubBridge] Pocket player joined: {json}");
     public void OnGameHubPocketPlayerReconnected(string json) => Debug.Log($"[GameHubBridge] Pocket player reconnected: {json}");
     public void OnGameHubPocketPlayerLeft(string json) => Debug.Log($"[GameHubBridge] Pocket player left: {json}");
-    public void OnGameHubAchievementsSharing(string json) => Debug.Log($"[GameHubBridge] Achievements sharing: {json}");
     public void OnGameHubLeaderboardSharing(string json) => Debug.Log($"[GameHubBridge] Leaderboard sharing: {json}");
 
     private static string Escape(string value)

@@ -64,18 +64,13 @@ namespace ArsmiGames.Demo
             DemoUI.Btn(col, "Show rewarded ad", () => { Log("→ ad:show"); Hub()?.ShowRewardedAd("sdk-panel"); },
                        new Color(DemoUI.Gold.r, DemoUI.Gold.g, DemoUI.Gold.b, 0.16f), DemoUI.Gold, 46, 16);
 
-            // No "set balance" button on purpose. The game can read the wallet and ask to
-            // spend from it; it cannot decide what is in it. Coins are earned through
-            // rewarded ads and achievements, which the platform grants.
+            // No "set balance" button on purpose, and no API behind one either. The game can
+            // read the wallet and ask to spend from it; it cannot decide what is in it. Coins
+            // are earned by watching the PLATFORM's own ad, which the platform grants.
             DemoUI.Section(col, "Wallet — server-authoritative, never from a save");
             var wallet = DemoUI.Row(col, 46);
             DemoUI.Btn(wallet.transform, "Get balance", () => { Hub()?.WalletGet(); Log("→ wallet:get"); }, null, null, 46, 16);
             DemoUI.Btn(wallet.transform, "Spend 5", () => { Hub()?.WalletSpend(5, "sdk-panel"); Log("→ wallet:spend 5"); }, null, null, 46, 16);
-
-            DemoUI.Section(col, "Achievements");
-            var ach = DemoUI.Row(col, 46);
-            DemoUI.Btn(ach.transform, "Define", DefineAchievements, null, null, 46, 16);
-            DemoUI.Btn(ach.transform, "+1 progress", () => { Hub()?.AchievementProgress("quiz_correct", 1); Log("→ achievement:progress"); }, null, null, 46, 16);
 
             DemoUI.Section(col, "Leaderboard");
             var lb = DemoUI.Row(col, 46);
@@ -146,10 +141,18 @@ namespace ArsmiGames.Demo
             hub.OnDataChanged += () => { Refresh(); Log($"← data:state — mode={hub.SaveMode}, {Count(hub.Keys)} keys"); };
             hub.OnDataError += message => Log($"← data:error — {message}");
             hub.OnAdStarted += () => Log("← ad:started");
-            hub.OnAdFinished += (rewarded, balance) =>
-                Log(rewarded ? $"← ad:rewarded (balance {balance})" : "← ad:dismissed");
+            // The ad pays out in YOUR currency, not in Flux — so there is no balance to report.
+            hub.OnAdFinished += rewarded =>
+                Log(rewarded ? "← ad:rewarded — grant your own reward" : "← ad:dismissed");
             hub.OnWalletChanged += balance => Log($"← wallet:state — {balance} flux");
             hub.OnWalletError += message => Log($"← wallet:error — {message}");
+            // Subscribing is what tells the platform you handle fullscreen at all — it will
+            // not publish a game that never registers this. And you do need it: the platform's
+            // fullscreen button resizes the frame around you, so a game that only hears about
+            // fullscreen when it asks for it renders at the wrong size when the platform asks.
+            hub.OnFullscreenChanged += fullscreen =>
+                Log($"← fullscreen {(fullscreen ? "entered" : "exited")}");
+
             hub.OnMuteChanged += (muted, fromPlatform) =>
             {
                 // The demo has no audio, but a real game mutes its AudioListener here —
@@ -208,27 +211,6 @@ namespace ArsmiGames.Demo
             if (!any) Log("save is empty");
         }
 
-        // Every field here is load-bearing. The platform's importer skips any entry that is
-        // missing one — silently, with no error and no log line — so an achievement with no
-        // rewardFlux, or without shareWithPlatform, simply never comes into existence and
-        // the game has no way to find out. The two easy ones to forget:
-        //
-        //   shareWithPlatform  the importer's opt-in filter; without it the entry is dropped
-        //   rewardFlux         must be > 0, or the entry is dropped
-        //
-        // The SDK test bench checks a manifest against these same rules and says which
-        // entries would be thrown away.
-        private void DefineAchievements()
-        {
-            Hub()?.AchievementsDefine(
-                "{\"achievements\":[" +
-                "{\"key\":\"quiz_first_correct\",\"title\":\"Bright spark\",\"description\":\"Answer your first question correctly.\"," +
-                "\"metric\":\"quiz_correct\",\"target\":1,\"rewardFlux\":10,\"type\":\"daily\",\"shareWithPlatform\":true}," +
-                "{\"key\":\"quiz_ten_correct\",\"title\":\"Quiz whiz\",\"description\":\"Answer 10 questions correctly.\"," +
-                "\"metric\":\"quiz_correct\",\"target\":10,\"rewardFlux\":50,\"type\":\"daily\",\"shareWithPlatform\":true}" +
-                "]}");
-            Log("→ achievements:manifest");
-        }
 
         public void Log(string line)
         {

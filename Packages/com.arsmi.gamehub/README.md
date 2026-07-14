@@ -8,7 +8,7 @@ exercises all of it.
 **Window → Package Manager → + → Install package from git URL…**
 
 ```
-https://github.com/Arsmi-17/com.arsmi.gamehub.git
+https://github.com/Arsmi-17/ArsmiGames_SDK.git?path=/Packages/com.arsmi.gamehub
 ```
 
 Or add it to your project's `Packages/manifest.json` directly:
@@ -16,28 +16,29 @@ Or add it to your project's `Packages/manifest.json` directly:
 ```json
 {
   "dependencies": {
-    "com.arsmi.gamehub": "https://github.com/Arsmi-17/com.arsmi.gamehub.git"
+    "com.arsmi.gamehub": "https://github.com/Arsmi-17/ArsmiGames_SDK.git?path=/Packages/com.arsmi.gamehub"
   }
 }
 ```
 
-`package.json` sits at that repo's root, so no `?path=` is needed.
+`?path=` is relative to the repo root and points at the folder holding `package.json`. Unity
+clones the whole repo and takes only that folder.
 
-**Pin a version** — append a tag: `…com.arsmi.gamehub.git#v1.0.0`. Without one you track the
-default branch, and someone else's push silently changes your next build.
+**Pin a version** — append a tag *after* the path:
+`…?path=/Packages/com.arsmi.gamehub#v1.0.0`. Without one you track the default branch, and
+someone else's push silently changes your next build.
 
 ### "Repository not found"
 
 Unity clones the **remote**, not your working copy, so this means git could not see anything
 at that URL. Two very different failures wear the same coat:
 
-1. **Nothing is pushed yet.** Committing locally is not enough — the package repo has to
-   exist and have the commit in it.
+1. **Nothing is pushed yet.** Committing locally is not enough.
 2. **The repo is private.** GitHub answers an unauthenticated client with *"Repository not
    found"* rather than *403*, so a private repo is indistinguishable from a missing one.
    Unity shells out to `git`, so it needs credentials `git` can find on its own: a
    credential helper holding a PAT, or an SSH url
-   (`git@github.com:Arsmi-17/com.arsmi.gamehub.git`).
+   (`git@github.com:Arsmi-17/ArsmiGames_SDK.git?path=/Packages/com.arsmi.gamehub`).
 
 On load the package copies its WebGL template into `Assets/WebGLTemplates/ArsmiGames`. That
 folder is **generated** — the copy inside the package is the source of truth, and edits to
@@ -83,7 +84,7 @@ press:
 
 That last check is the point of the whole thing. Unity's stock template does not load the
 SDK, and when it is missing the game still builds, still loads, still looks completely fine —
-and cannot reach the platform at all. No saves, no achievements, no leaderboards, and *no
+and cannot reach the platform at all. No saves, no leaderboards, and *no
 error*, in either direction. It is a failure with no symptom except silence, so it is caught
 at build time instead.
 
@@ -175,12 +176,17 @@ hub.WalletGet();                     // read
 hub.WalletSpend(50, "extra-hint");   // the server CAN refuse this
 ```
 
-Do not hand over what the player is buying until `OnWalletChanged` fires. Earning is not in
-here on purpose: coins come from rewarded ads and achievement claims, which the platform
-grants after it has seen the thing happen.
+Do not hand over what the player is buying until `OnWalletChanged` fires.
 
-`WalletSet` still exists but is `[Obsolete]` — it writes an absolute balance and is trusted
-as-is, so a game can mint currency with it.
+**There is no way to add coins, and there will not be one.** `WalletSet` has been removed — it
+wrote an absolute balance and was trusted as-is, so any game could mint unlimited currency with
+one call. The platform now refuses the message outright.
+
+Flux Coins go up in three places, none of them a game: the player **buys** them, the player
+watches **the platform's own ad** from the platform's UI.
+
+If your game has its own currency — coins, gems, lives — that is yours to grant however you
+like. It does not convert to Flux.
 
 **Never put currency in a save.** Save data lives on the player's machine and is trusted as
 written — the player can edit it. Purchases and anything else worth cheating for go through
@@ -189,14 +195,21 @@ the wallet, which is server-authoritative.
 ## Rewarded ads
 
 The ad is a **platform overlay**, drawn over your game. Your game does not render it, does not
-time it, and does not decide whether it was watched — the reward is real currency, so that call
-stays outside the iframe. Your game asks, pauses, and waits.
+time it, and does not decide whether it was watched — a game cannot be trusted to report that,
+so the decision stays outside the iframe. Your game asks, pauses, and waits.
+
+**An ad your game asks for pays no Flux Coins.** It pays whatever *your* game promised — the
+hint, the extra life, the skin — and *your* code grants it. There is no balance in the callback,
+because no balance moved.
+
+(The platform has its own "watch an ad for Flux" button in its UI. That one is the platform's,
+the player starts it deliberately, and it has nothing to do with your game.)
 
 ```csharp
 hub.OnAdStarted  += PauseGame;          // the platform mutes the frame; it does not pause you
-hub.OnAdFinished += (rewarded, balance) => {
+hub.OnAdFinished += rewarded => {
     ResumeGame();
-    if (rewarded) GiveHint();           // ONLY here
+    if (rewarded) GiveHint();           // your reward, your currency, your call
 };
 
 hub.ShowRewardedAd("quiz-hint");
@@ -216,17 +229,19 @@ hub.SetMuted(true);   // the game muted itself; the platform's volume icon follo
 You must honour `OnMuteChanged` when `fromPlatform` is true, or the platform's volume button
 does nothing. The bridge drops no-op updates, so this cannot loop.
 
-## Achievements and leaderboards
+## Leaderboards
 
 ```csharp
-hub.AchievementProgress("quiz_correct", 1);
 hub.LeaderboardScore(120, "quiz_score", "Quiz score");
 ```
 
-Two rules that bite, because both fail *silently*:
+**The platform has no achievements.** There is no `AchievementProgress`, no
+`AchievementsDefine`, and no manifest to send — the feature was removed. Track achievements
+inside your own game and reward the player in your own currency; they were never worth any Flux
+Coins, so for most games that is only a change of where the code lives.
 
-- A manifest entry is dropped by the platform's importer unless it has
-  `shareWithPlatform: true` and `rewardFlux > 0`. No error, it simply never exists.
+One rule that bites, because it fails *silently*:
+
 - A leaderboard submit only replaces your score when it **beats** the stored one, for that
   board's sort direction. A game that assumes every submit overwrites will disagree with the
   platform.
@@ -244,35 +259,19 @@ The sample needs TMP's Essential Resources. If its labels render as nothing at a
 ## Releasing (maintainers)
 
 The package is developed **inside** the Unity SDK project, as an embedded package at
-`Packages/com.arsmi.gamehub/`. That is deliberate: you edit it with the demo scene open and
-the Editor recompiling, rather than editing files in `Library/PackageCache` and losing them
-on the next resolve.
-
-It is *consumed* from a package-only repo, where `package.json` is at the root — so
-installing it does not drag down `Assets/`, `ProjectSettings/`, or the WebGL builds.
-
-Publish with `git subtree split`, the same way the platform vendors its realtime server.
-From the **Unity SDK project repo**:
+`Packages/com.arsmi.gamehub/`, and consumed from that same repo by git url with `?path=`.
+Nothing has to be split out or mirrored — a release is a push and a tag:
 
 ```bash
-# once
-git remote add pkg https://github.com/Arsmi-17/com.arsmi.gamehub.git
-
-# every release
-git subtree push --prefix=Packages/com.arsmi.gamehub pkg main
+# bump "version" here in package.json, add a CHANGELOG.md entry
+git commit -am "gamehub 1.1.0"
+git tag v1.1.0
+git push --follow-tags
 ```
 
-`subtree push` rewrites the package folder's history so that `package.json` lands at the
-repo root, which is what makes the plain (no `?path=`) install url work. The commits stay
-descended from the ones in the SDK project, so it fast-forwards each time rather than
-forcing.
+Bump the version and write the changelog entry **in the same commit as the change**, not at
+tag time. An untagged consumer tracks the default branch and picks the change up whether or
+not you remembered to write it down.
 
-Then tag the release **in the package repo**, so consumers can pin to it:
-
-```bash
-git -C <package-repo-clone> tag v1.0.0 && git push --tags
-```
-
-Bump `version` in `package.json` and add a `CHANGELOG.md` entry in the same commit as the
-change, not at tag time — an untagged consumer tracks the default branch and will pick the
-change up whether or not you remembered to write it down.
+Consumers who install without a tag get whatever is on the default branch, so anything you
+push is live for them immediately. Tag, and tell people to pin.

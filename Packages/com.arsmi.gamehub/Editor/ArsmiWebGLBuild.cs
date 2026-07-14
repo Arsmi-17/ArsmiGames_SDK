@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Build.Reporting;
@@ -27,10 +28,20 @@ namespace ArsmiGames.EditorTools
     /// Both run for *any* WebGL build, including File → Build Settings. The menu item
     /// below is a convenience, not the enforcement.
     /// </summary>
+    /// <summary>Which way up the game is meant to be played.</summary>
+    public enum Orientation
+    {
+        Landscape,
+        Portrait,
+    }
+
     public class ArsmiWebGLBuildProcessor : IPreprocessBuildWithReport, IPostprocessBuildWithReport
     {
         public const string Template = "PROJECT:ArsmiGames";
         public const string SdkFile = "gamehub-sdk.js";
+
+        /// <summary>The orientation the next build should be stamped with. Set by the menu.</summary>
+        public const string OrientationKey = "Arsmi.BuildOrientation";
 
         public int callbackOrder => 0;
 
@@ -96,7 +107,7 @@ namespace ArsmiGames.EditorTools
             {
                 throw new BuildFailedException(
                     $"[Arsmi] The build's index.html does not load {SdkFile}.\n" +
-                    "The game would load, look fine, and be unable to reach the platform — no saves, no achievements, " +
+                    "The game would load, look fine, and be unable to reach the platform — no saves, " +
                     "no leaderboards, and no error to tell you why.\n" +
                     "Set Player Settings → WebGL → Resolution and Presentation → WebGL Template to 'ArsmiGames' and build again.");
             }
@@ -105,7 +116,8 @@ namespace ArsmiGames.EditorTools
             // on a static host the absolute /sdk/ path resolves against THAT host and
             // 404s. Without this file the game is mute everywhere except the platform,
             // which is the hardest version of this bug to spot.
-            if (!File.Exists(Path.Combine(output, SdkFile)))
+            var bundled = Path.Combine(output, SdkFile);
+            if (!File.Exists(bundled))
             {
                 throw new BuildFailedException(
                     $"[Arsmi] {SdkFile} was not copied into the build.\n" +
@@ -115,7 +127,104 @@ namespace ArsmiGames.EditorTools
                     "Run Arsmi Games → Reinstall WebGL template and build again.");
             }
 
-            Debug.Log($"[Arsmi] WebGL build verified: SDK loads (platform copy, with the bundled one as fallback). → {output}");
+            VerifySdkIsCurrent(bundled);
+            StampOrientation(index);
+
+            Debug.Log($"[Arsmi] WebGL build verified: SDK {SdkVersion(File.ReadAllText(bundled))}, " +
+                      $"{ChosenOrientation().ToString().ToLowerInvariant()}. → {output}");
+        }
+
+        /// <summary>
+        /// The bundled SDK must be the package's SDK, byte for byte.
+        ///
+        /// "The file is there" was the old check, and a stale file passes it. That is not a
+        /// hypothetical: a game shipped a gamehub-sdk.js four hundred lines shorter than the
+        /// current one, from before the platform could ask a game what it implements. It
+        /// answered the handshake, so it looked connected. It could not answer anything else,
+        /// so every publish requirement failed, and the developer was sent looking for a bug
+        /// in code that was working perfectly.
+        ///
+        /// An SDK is a protocol. A stale one does not error — it disagrees, silently. So the
+        /// build refuses to produce one.
+        /// </summary>
+        private static void VerifySdkIsCurrent(string bundled)
+        {
+            var canonical = ArsmiTemplateInstaller.PackageFile(SdkFile);
+            if (canonical == null)
+            {
+                // Cannot prove it either way. Say so rather than passing in silence — a check
+                // that quietly does nothing is worse than no check, because it is trusted.
+                Debug.LogWarning(
+                    $"[Arsmi] Could not find {SdkFile} inside the package, so the build could not verify " +
+                    "that the SDK it bundled is the current one. Reinstall com.arsmi.gamehub.");
+                return;
+            }
+
+            if (SameContent(canonical, bundled)) return;
+
+            throw new BuildFailedException(
+                $"[Arsmi] The {SdkFile} in this build is not the one in the package.\n\n" +
+                $"  build:   {SdkVersion(File.ReadAllText(bundled))}  ({bundled})\n" +
+                $"  package: {SdkVersion(File.ReadAllText(canonical))}  ({canonical})\n\n" +
+                "The SDK is the protocol the platform speaks. An out-of-date copy still answers the " +
+                "handshake, so the game looks connected — it just cannot answer the questions the " +
+                "platform asks before it will publish anything, and none of that errors.\n\n" +
+                "This is almost always an edited or left-over copy in Assets/WebGLTemplates/ArsmiGames/. " +
+                "Run Arsmi Games → Reinstall WebGL template and build again.");
+        }
+
+        /// <summary>Writes the chosen orientation into the built index.html.</summary>
+        private static void StampOrientation(string index)
+        {
+            var want = ChosenOrientation().ToString().ToLowerInvariant();
+            var html = File.ReadAllText(index);
+
+            // The template ships data-orientation="landscape" as its default, so there is
+            // always something to replace. If there is not, the project is using a template
+            // that is not ours, and the SDK checks above would already have failed.
+            var stamped = Regex.Replace(
+                html,
+                "data-orientation=\"[^\"]*\"",
+                $"data-orientation=\"{want}\"",
+                RegexOptions.IgnoreCase);
+
+            if (stamped == html && !html.Contains($"data-orientation=\"{want}\""))
+            {
+                Debug.LogWarning(
+                    "[Arsmi] index.html has no data-orientation attribute to stamp — the platform will fall " +
+                    "back to the orientation on the game record. Reinstall the WebGL template to fix this.");
+                return;
+            }
+
+            File.WriteAllText(index, stamped);
+        }
+
+        /// <summary>What the menu (or -arsmiOrientation) last asked for. Landscape if never asked.</summary>
+        public static Orientation ChosenOrientation()
+        {
+            return EditorPrefs.GetString(OrientationKey, nameof(Orientation.Landscape)) == nameof(Orientation.Portrait)
+                ? Orientation.Portrait
+                : Orientation.Landscape;
+        }
+
+        /// <summary>The SDK's self-reported version, for error messages. "unknown" if absent.</summary>
+        private static string SdkVersion(string js)
+        {
+            var found = Regex.Match(js, "var SDK_VERSION = \"([^\"]+)\"");
+            // An SDK old enough to have no version constant is exactly the one worth naming.
+            return found.Success ? $"v{found.Groups[1].Value}" : "an unversioned build (pre-1.0)";
+        }
+
+        private static bool SameContent(string a, string b)
+        {
+            var left = File.ReadAllBytes(a);
+            var right = File.ReadAllBytes(b);
+            if (left.Length != right.Length) return false;
+            for (var i = 0; i < left.Length; i++)
+            {
+                if (left[i] != right[i]) return false;
+            }
+            return true;
         }
     }
 
@@ -123,7 +232,9 @@ namespace ArsmiGames.EditorTools
     {
         private const string LastPathKey = "Arsmi.LastBuildPath";
 
-        [MenuItem("Arsmi Games/Build WebGL… %#b", priority = 0)]
+        // %&b — Ctrl+Alt+B. (% = Ctrl, & = Alt, # = Shift.) It was Ctrl+Shift+B, which Unity
+        // itself uses for Build Settings on some layouts, and which several IDEs take.
+        [MenuItem("Arsmi Games/Build WebGL… %&b", priority = 0)]
         public static void BuildWebGL()
         {
             var scenes = EditorBuildSettings.scenes
@@ -137,6 +248,32 @@ namespace ArsmiGames.EditorTools
                     "No scenes are enabled in Build Settings, so the build would be empty.", "OK");
                 return;
             }
+
+            // Asked before the folder picker, so the question is answered while you are still
+            // thinking about the build rather than after you have committed to a location.
+            //
+            // Unity's dialog gives us two buttons and a cancel. The default (the "ok" button)
+            // is whichever was chosen last, so building the same game repeatedly is one Enter.
+            var last = ArsmiWebGLBuildProcessor.ChosenOrientation();
+            var portraitWasLast = last == Orientation.Portrait;
+
+            var answer = EditorUtility.DisplayDialogComplex(
+                "Build WebGL",
+                "Which way up is this game played?\n\n" +
+                "It is written into index.html, and the platform sizes the frame around the game to match. " +
+                "Getting it wrong does not break the build — the game just runs in a frame the wrong shape.\n\n" +
+                $"Last build: {last.ToString().ToLowerInvariant()}.",
+                portraitWasLast ? "Portrait" : "Landscape",   // ok      — repeat last
+                "Cancel",                                      // cancel
+                portraitWasLast ? "Landscape" : "Portrait");   // alt     — the other one
+
+            if (answer == 1) return; // cancel
+
+            var orientation = answer == 0
+                ? last
+                : (portraitWasLast ? Orientation.Landscape : Orientation.Portrait);
+
+            EditorPrefs.SetString(ArsmiWebGLBuildProcessor.OrientationKey, orientation.ToString());
 
             var previous = EditorPrefs.GetString(LastPathKey, "");
             var suggestedName = string.IsNullOrEmpty(previous)
@@ -177,17 +314,34 @@ namespace ArsmiGames.EditorTools
 
         /// <summary>
         /// For CI: Unity.exe -quit -batchmode -executeMethod ArsmiGames.EditorTools.ArsmiBuild.BuildFromCommandLine
-        /// -arsmiOutput &lt;folder&gt;
+        /// -arsmiOutput &lt;folder&gt; [-arsmiOrientation portrait|landscape]
         /// </summary>
         public static void BuildFromCommandLine()
         {
             var args = Environment.GetCommandLineArgs();
             var output = "";
+            var orientation = "";
             for (var i = 0; i < args.Length - 1; i++)
             {
                 if (args[i] == "-arsmiOutput") output = args[i + 1];
+                if (args[i] == "-arsmiOrientation") orientation = args[i + 1];
             }
             if (string.IsNullOrEmpty(output)) output = Path.Combine("Builds", "WebGL");
+
+            // Batch mode has no one to ask, so it takes the flag — and when the flag is absent
+            // it inherits whatever the last interactive build chose, which on a CI machine is
+            // landscape (the default). An unrecognised value is a typo, and a typo that
+            // silently builds the wrong shape is worth stopping for.
+            if (!string.IsNullOrEmpty(orientation))
+            {
+                if (!Enum.TryParse<Orientation>(orientation, ignoreCase: true, out var parsed))
+                {
+                    Debug.LogError($"[Arsmi] -arsmiOrientation must be 'portrait' or 'landscape', not '{orientation}'.");
+                    EditorApplication.Exit(1);
+                    return;
+                }
+                EditorPrefs.SetString(ArsmiWebGLBuildProcessor.OrientationKey, parsed.ToString());
+            }
 
             var scenes = EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray();
 

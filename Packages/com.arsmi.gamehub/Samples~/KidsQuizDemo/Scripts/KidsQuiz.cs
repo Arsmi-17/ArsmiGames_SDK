@@ -224,13 +224,15 @@ namespace ArsmiGames.Demo
             hub.ShowRewardedAd("quiz-hint");
         }
 
-        private void OnAdFinished(bool rewarded, int balance)
+        private void OnAdFinished(bool rewarded)
         {
             var hub = GameHubBridge.Instance;
             hub?.SetMuted(false);
 
+            // No balance, and no Flux. An ad YOUR game asks for pays out in YOUR game — here,
+            // the hint below. Flux Coins never move for it.
             _console?.Log(rewarded
-                ? $"← ad finished: rewarded (balance {balance})"
+                ? "← ad finished: rewarded — granting the hint"
                 : "← ad finished: skipped or failed — no hint");
 
             if (!rewarded)
@@ -269,9 +271,8 @@ namespace ArsmiGames.Demo
                 _feedback.text = "<color=#5cc47d>Correct!</color>";
                 _feedback.color = DemoUI.Good;
 
-                // Achievements and leaderboards are server-authoritative and go through their
+                // The leaderboard is server-authoritative and goes through its
                 // own APIs — deliberately not through the save, which the player can edit.
-                GameHubBridge.Instance?.AchievementProgress("quiz_correct", 1);
             }
             else
             {

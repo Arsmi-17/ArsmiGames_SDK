@@ -1,8 +1,28 @@
 <!DOCTYPE html>
-<html lang="en-us">
+<!--
+  data-orientation is stamped by the build (Arsmi Games → Build WebGL…, which asks). The
+  value here is only the default for a build made some other way.
+
+  It is written by the post-processor rather than by a {{{ }}} macro because Unity evaluates
+  those against its own set of names, and an unknown one is a build error rather than an
+  empty string.
+-->
+<html lang="en-us" data-orientation="landscape">
   <head>
     <meta charset="utf-8">
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+
+    <!--
+      Static, not injected from JS.
+
+      This used to be appended to <head> from script, which is after the browser has already
+      laid the page out once — so on a notched phone the first frame is laid out against the
+      wrong viewport and the canvas is the wrong size until something forces a reflow.
+      viewport-fit=cover is what lets the canvas reach under the notch instead of being
+      letterboxed by the safe area.
+    -->
+    <meta name="viewport" content="width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+
     <title>{{{ PRODUCT_NAME }}}</title>
 
     <!--
@@ -126,12 +146,6 @@
         ),
       };
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-      }
       canvas.style.width = "100%";
       canvas.style.height = "100%";
 
@@ -150,7 +164,12 @@
         }).then(function (unityInstance) {
           document.querySelector("#unity-loading-bar").style.display = "none";
           window.unityInstance = unityInstance;
-          postToPlatform("gamehub:unity:ready", {});
+          // Tell the platform what this build was actually made for. It already has an
+          // orientation on the game record, typed in by whoever uploaded it; this is the
+          // build answering for itself, so the two can be compared instead of trusted.
+          postToPlatform("gamehub:unity:ready", {
+            orientation: document.documentElement.getAttribute("data-orientation") || "landscape",
+          });
         }).catch(function (message) {
           postToPlatform("gamehub:unity:error", { error: String(message) });
           unityShowBanner(message, 'error');

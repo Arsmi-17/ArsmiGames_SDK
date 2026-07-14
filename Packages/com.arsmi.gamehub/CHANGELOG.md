@@ -5,6 +5,98 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.0.0] - 2026-07-14
+
+**Achievements are gone from the platform.** Not capped, not deprecated — removed. The tables,
+the routes, the profile tab, the admin screens, and the SDK surface.
+
+### Removed
+
+- `AchievementsDefine`, `AchievementProgress`, `AchievementProgressJson` and
+  `OnGameHubAchievementsSharing`. The platform refuses `gamehub:achievements:manifest` and
+  `gamehub:achievement:progress`, and the JS SDK will not even send them: they never leave your
+  iframe, and you get a console error naming the event.
+
+### Migrating
+
+Track achievements **inside your own game**, and reward the player in **your own currency**.
+
+That was already the only thing a game's achievements could do — 2.0.0 forced their `rewardFlux`
+to zero, because a game that prices its own rewards in real currency is a game that mints money.
+So for most games this is a change of where the code lives, not what it does.
+
+```diff
+- GameHubBridge.Instance.AchievementProgress("quiz_correct", 1);
++ _myOwnAchievements.Advance("quiz_correct", 1);   // your save, your currency, your UI
+```
+
+Leaderboards are untouched.
+
+## [2.0.0] - 2026-07-14
+
+**A game cannot increase Flux Coins.** Breaking, deliberately, and it will break any game that
+was doing so — which is the point.
+
+### Removed
+
+- **`WalletSet` is gone.** It wrote an absolute balance and was trusted as-is, so any game could
+  mint unlimited currency with one call. The platform refuses the message now, and the SDK will
+  not even send it. Read with `WalletGet`, take with `WalletSpend`. There is no counterpart that
+  gives coins, and there will not be one.
+
+### Changed
+
+- **`OnAdFinished` is now `Action<bool>`, not `Action<bool, int>`.** The `int` was the player's
+  new Flux balance, and it was there because a rewarded ad used to pay Flux. It does not.
+
+  An ad **your game asks for** pays out in **your game**: the extra life, the skin, the boss
+  level, granted by your own code when `rewarded` is true. It never moves the player's Flux. (The
+  platform has its own "watch an ad for Flux" button in its own UI. That one is not yours.)
+
+  A game could previously loop `ShowRewardedAd()` and print money.
+
+- **`rewardFlux` in an achievement manifest is read and thrown away.** A game's achievements are
+  worth **0 Flux**. The manifest is written by the game, so `rewardFlux` was a number the game
+  chose for itself — define an achievement worth a million against a metric you emit, complete
+  it, claim it. Reward your players in your own currency instead.
+
+### Migrating
+
+```diff
+- hub.OnAdFinished += (rewarded, balance) => { if (rewarded) GiveHint(); };
++ hub.OnAdFinished += rewarded => { if (rewarded) GiveHint(); };
+
+- hub.WalletSet(newBalance);   // no replacement — a game cannot add coins
++ hub.WalletSpend(50, "hint"); // taking is still fine
+```
+
+## [1.1.0] - 2026-07-14
+
+The platform now checks that a game really handles mute and fullscreen before it will publish
+it, and a game cannot be published until it does. **Rebuild with this version.** A build made
+against 1.0.0 cannot answer the check, and a game that cannot answer is treated as a game that
+does not work — which is the point, but it means an old build will be blocked at upload.
+
+### Added
+
+- `OnFullscreenChanged` and `IsFullscreen`. Subscribing is what tells the platform you handle
+  fullscreen at all. Previously `OnGameHubFullscreen` was a `Debug.Log` and nothing else.
+- Acknowledgements. The platform sends a real `set_mute` and `set_fullscreen` carrying the
+  state the game is **already in** — silent to the player — and `GameHubBridge.cs` answers
+  whether anything is actually listening. It has to come from C#: the `.jslib` subscribes on
+  your game's behalf whether or not your C# does anything with them, so a JavaScript answer
+  would report every Unity build ever made as compliant.
+
+### Fixed
+
+- **`engine: "unity"` never took effect.** The WebGL template loads `gamehub-sdk.js` in
+  `<head>`, so by the time `GameHubBridge_Init` ran, `window.GameHubBridge` already existed and
+  the `create({ engine: "unity" })` guarded by `if (!window.GameHubBridge)` was skipped every
+  single time. Every Unity build was running in auto-wiring mode — inferring what the game
+  implements from JavaScript subscriptions, which in a Unity build are the `.jslib`'s own. Every
+  requirement came back "wired" no matter what the C# did. The false pass was hiding inside the
+  mechanism built to prevent it.
+
 ## [1.0.0] - 2026-07-14
 
 First release as a UPM package. Previously the SDK lived in `Assets/ArsmiGames/` and had to
