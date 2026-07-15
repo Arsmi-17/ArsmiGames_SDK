@@ -100,6 +100,16 @@ namespace ArsmiGames.EditorTools
             return File.Exists(path) ? path : null;
         }
 
+        /// <summary>
+        /// A file in the template as INSTALLED in Assets/ — the copy Unity actually builds from.
+        /// Null if it is not there.
+        /// </summary>
+        public static string InstalledFile(string name)
+        {
+            var path = Path.Combine(DestinationFolder, name);
+            return File.Exists(path) ? path : null;
+        }
+
         /// <summary>True if the template is present in the project and matches the package.</summary>
         public static bool IsInstalled()
         {

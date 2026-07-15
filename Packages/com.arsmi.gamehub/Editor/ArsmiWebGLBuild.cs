@@ -86,6 +86,43 @@ namespace ArsmiGames.EditorTools
                     "cannot talk to Arsmi Games at all.\n" +
                     "Try Arsmi Games → Reinstall WebGL template, and check the Console for why the copy failed.");
             }
+
+            VerifyTemplateMacros();
+        }
+
+        /// <summary>
+        /// Catch an empty template macro before Unity's preprocessor does.
+        ///
+        /// Unity substitutes anything between triple braces by evaluating it as an expression.
+        /// It scans the raw text, so it finds them inside HTML comments too — and an empty one
+        /// fails the build with
+        ///
+        ///     Preprocessor error "TypeError: Cannot read property 'toString' of undefined"
+        ///
+        /// which names the file but not the line, and reads like a corrupt Unity install rather
+        /// than a typo in a comment. It has already cost one afternoon. The message below costs
+        /// nothing and says exactly where to look.
+        /// </summary>
+        private static void VerifyTemplateMacros()
+        {
+            var index = ArsmiTemplateInstaller.InstalledFile("index.html");
+            if (index == null) return;
+
+            var lines = File.ReadAllLines(index);
+            for (var i = 0; i < lines.Length; i++)
+            {
+                // An empty or whitespace-only macro. A macro with a name in it is Unity's
+                // business, and if the name is wrong Unity says so clearly.
+                if (!Regex.IsMatch(lines[i], @"\{\{\{\s*\}\}\}")) continue;
+
+                throw new BuildFailedException(
+                    $"[Arsmi] The WebGL template has an empty macro on line {i + 1} of index.html:\n\n" +
+                    $"    {lines[i].Trim()}\n\n" +
+                    "Unity evaluates whatever sits between triple braces, and an empty one throws — " +
+                    "even inside an HTML comment, because the preprocessor scans the raw text and does " +
+                    "not know what a comment is.\n\n" +
+                    "Remove it, or run Arsmi Games → Reinstall WebGL template to restore the packaged one.");
+            }
         }
 
         public void OnPostprocessBuild(BuildReport report)

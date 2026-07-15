@@ -321,12 +321,16 @@
     // why this module being present in the SDK for everyone is harmless.
     this._casino = { pending: {}, seq: 0 };
 
-    this._onInternal("casino:result", function (payload) {
+    // The FULL event name, exactly as the platform sends it. This said "casino:result" and the
+    // platform sends "gamehub:casino:result", so the reply arrived, matched no handler, and every
+    // round hung on "Rolling…" for ever. Nothing threw — a promise that is never resolved is
+    // indistinguishable from one that is merely slow, which is why this looked like a hang and
+    // not like a bug.
+    this._onInternal("gamehub:casino:result", function (payload) {
       var key = payload && payload.roundKey;
-      var resolve = key ? self._casino.pending[key] : null;
-      if (!resolve) return;
-      delete self._casino.pending[key];
-      resolve(payload);
+      var entry = key ? self._casino.pending[key] : null;
+      if (!entry) return;
+      self._settleCasino(key, payload);
     });
 
     this.casino = {
@@ -354,10 +358,7 @@
         }
 
         var key = String(opts.roundKey || "").trim() || self._newRoundKey();
-        var promise = new Promise(function (resolve) {
-          self._casino.pending[key] = resolve;
-        });
-
+        var promise = self._awaitCasino(key);
         self.emit("gamehub:casino:round", { mode: mode, bet: bet, roundKey: key });
         return promise;
       },
@@ -365,7 +366,7 @@
       /** The current commitment: { serverSeedHash, clientSeed, nonce }. */
       seed: function () {
         var key = self._newRoundKey();
-        var promise = new Promise(function (resolve) { self._casino.pending[key] = resolve; });
+        var promise = self._awaitCasino(key);
         self.emit("gamehub:casino:seed", { roundKey: key });
         return promise;
       },
@@ -378,7 +379,7 @@
        */
       rotateSeed: function (clientSeed) {
         var key = self._newRoundKey();
-        var promise = new Promise(function (resolve) { self._casino.pending[key] = resolve; });
+        var promise = self._awaitCasino(key);
         self.emit("gamehub:casino:rotate", { roundKey: key, clientSeed: clientSeed || null });
         return promise;
       },
@@ -497,6 +498,47 @@
   // wallet:state either way, so a caller cannot tell "my spend landed" from "someone
   // else's did". Queue the resolvers and settle them all on the next reply: the
   // balance in it is authoritative regardless of which call produced it.
+  /**
+   * How long a round may go unanswered before we call it lost.
+   *
+   * A pending promise nobody ever resolves does not throw, does not log, and does not time out —
+   * it just sits there, and the game sits there with it, showing "Rolling…" for ever. That is
+   * exactly the bug that shipped here: the reply arrived under a name the SDK was not listening
+   * for, and the only symptom was a spinner.
+   *
+   * So a round now always ends. If the platform has not answered in this long, the promise
+   * rejects with something a developer can act on, instead of failing silently and looking slow.
+   */
+  var CASINO_TIMEOUT_MS = 20000;
+
+  /** Register a pending casino call, and guarantee it settles one way or the other. */
+  GameHubSDK.prototype._awaitCasino = function (key) {
+    var self = this;
+    return new Promise(function (resolve) {
+      var timer = setTimeout(function () {
+        self._settleCasino(key, {
+          roundKey: key,
+          ok: false,
+          code: "timeout",
+          error:
+            "The platform did not answer this round within " +
+            CASINO_TIMEOUT_MS / 1000 +
+            "s. The bet may or may not have been placed — retry with the SAME roundKey and you " +
+            "will get the original result rather than a second spin.",
+        });
+      }, CASINO_TIMEOUT_MS);
+      self._casino.pending[key] = { resolve: resolve, timer: timer };
+    });
+  };
+
+  GameHubSDK.prototype._settleCasino = function (key, payload) {
+    var entry = this._casino.pending[key];
+    if (!entry) return;
+    delete this._casino.pending[key];
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.resolve(payload);
+  };
+
   // An idempotency key for one round. Uniqueness only has to hold per player, and the server
   // enforces it anyway (the column is UNIQUE) — this just has to not collide with itself.
   GameHubSDK.prototype._newRoundKey = function () {

@@ -1,11 +1,19 @@
 <!DOCTYPE html>
 <!--
-  data-orientation is stamped by the build (Arsmi Games → Build WebGL…, which asks). The
-  value here is only the default for a build made some other way.
+  data-orientation is stamped into this file by the build (Arsmi Games -> Build WebGL, which
+  asks portrait or landscape). The value below is only the default, for a build made some
+  other way.
 
-  It is written by the post-processor rather than by a {{{ }}} macro because Unity evaluates
-  those against its own set of names, and an unknown one is a build error rather than an
-  empty string.
+  It is written afterwards, by the post-processor, rather than by one of Unity's own template
+  macros: Unity evaluates those against a fixed set of names it knows, and a name it does not
+  know fails the build instead of producing an empty string.
+
+  Nothing in this file may contain a Unity macro delimiter - three braces - not even inside a
+  comment like this one. The preprocessor scans the raw text, so it finds them in comments
+  too, and evaluates whatever sits between them. This very comment used to name the delimiter
+  literally, which made Unity try to evaluate the expression " " and fail the build with
+  "Cannot read property 'toString' of undefined" - an error that points at the file but not
+  at the sentence.
 -->
 <html lang="en-us" data-orientation="landscape">
   <head>
