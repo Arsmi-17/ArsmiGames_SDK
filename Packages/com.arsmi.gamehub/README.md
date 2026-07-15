@@ -68,8 +68,13 @@ the platform, or in the **SDK Assessment** page in admin.
 
 ## Building
 
-**Arsmi Games → Build WebGL…** (`Ctrl+Shift+B`). Pick a folder. Upload it. There is nothing
-to edit afterwards.
+**Arsmi Games → Build WebGL…** (`Ctrl+Alt+B`). It asks **Portrait or Landscape**, then you
+pick a folder. Upload it. There is nothing to edit afterwards.
+
+The orientation you pick is written into the build's `index.html`, and the canvas is locked to
+it: a portrait build stays portrait on a landscape screen, with black bars down the sides,
+rather than stretching to fill. (If your game is not 9:16 / 16:9, change the one pair of
+numbers in the template's orientation-lock CSS.)
 
 The build is also *checked*. Two callbacks run around every WebGL build — including one
 started from `File → Build Settings`, so the guarantee does not depend on which button you
@@ -88,13 +93,44 @@ and cannot reach the platform at all. No saves, no leaderboards, and *no
 error*, in either direction. It is a failure with no symptom except silence, so it is caught
 at build time instead.
 
-For CI:
+For CI (pass `-arsmiOrientation portrait` or `landscape` to match the menu):
 
 ```
 Unity.exe -quit -batchmode -projectPath . \
   -executeMethod ArsmiGames.EditorTools.ArsmiBuild.BuildFromCommandLine \
-  -arsmiOutput Builds/WebGL
+  -arsmiOutput Builds/WebGL -arsmiOrientation landscape
 ```
+
+## Test your integration before you upload
+
+**Arsmi Games → Test SDK Integration** runs the platform's own assessment inside Unity, so you
+find out whether a build will publish in seconds — not after a build-and-upload round trip that
+comes back rejected.
+
+It is the same verdict the platform reaches on upload, reached the same way. The platform does
+not read your code; it *runs* your game and drives the bridge at it — sending a real `set_mute`
+and waiting to hear your own handler answer — because a game that ignores the volume button and
+one that honours it look identical from the outside. So this tool does the same:
+
+1. Pick what you are **publishing as** (Platform save / Own backend / No save) — the save
+   requirement differs for each, exactly as in the upload wizard.
+2. Press **Enter Play Mode & Test** (or enter Play Mode yourself and press **Run Test**).
+3. It reads what your game actually subscribed to, fires `set_mute` and `set_fullscreen` at the
+   live bridge to confirm the handlers run without throwing, and reports.
+
+The report has two parts:
+
+- **Build settings** (no Play Mode needed): WebGL template, decompression fallback, Run In
+  Background, and whether the bundled SDK is current.
+- **Live protocol**: SDK connected, mute handled, fullscreen handled, save/identity for your
+  chosen mode — plus wallet, ads and leaderboard as optional, informational rows.
+
+Each failure says what is wrong and how to fix it, and **Save report…** writes it to a
+Markdown file you can keep. A green verdict here means a green verdict on upload.
+
+One thing the Play Mode run cannot see: whether your mute handler actually silenced the audio,
+only that it ran without error — same limit the platform has. The [Mute](#mute) section is the
+rule the check cannot enforce for you: silence *every* channel.
 
 ## Adding it to your game
 

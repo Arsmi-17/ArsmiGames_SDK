@@ -316,6 +316,14 @@ public class GameHubBridge : MonoBehaviour
 
     public void LeaderboardScoreJson(string json)
     {
+        // Submitting a score IS using the leaderboard. A score message carries its own board
+        // definition (metricKey, label, sortDirection), so a game never has to call
+        // LeaderboardDefine separately — and most do not. Without this line, a game that only
+        // submits scores reported leaderboard:false in its wiring, so the platform's assessment
+        // (and the in-editor test runner) both showed "leaderboard not used" for a game visibly
+        // posting scores. The flag means "has this game touched the leaderboard", and a score is
+        // the most direct way there is to touch it.
+        _definedLeaderboard = true;
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_LeaderboardScore(string.IsNullOrEmpty(json) ? "{}" : json);
 #else
