@@ -216,24 +216,25 @@ namespace ArsmiGames.EditorTools
             var want = ChosenOrientation().ToString().ToLowerInvariant();
             var html = File.ReadAllText(index);
 
-            // The template ships data-orientation="landscape" as its default, so there is
-            // always something to replace. If there is not, the project is using a template
-            // that is not ours, and the SDK checks above would already have failed.
-            var stamped = Regex.Replace(
-                html,
-                "data-orientation=\"[^\"]*\"",
-                $"data-orientation=\"{want}\"",
+            // ONLY the <html> opening tag's attribute, never every data-orientation in the file.
+            //
+            // The template's CSS carries `html[data-orientation="portrait"]` as a selector, and
+            // a blind global replace would rewrite THAT too — so a landscape build would turn the
+            // portrait rule into a second landscape rule and quietly lose the portrait lock. The
+            // orientation belongs on the <html> element; that is the only occurrence we touch.
+            var pattern = new Regex(
+                "(<html\\b[^>]*\\bdata-orientation=\")[^\"]*(\")",
                 RegexOptions.IgnoreCase);
 
-            if (stamped == html && !html.Contains($"data-orientation=\"{want}\""))
+            if (!pattern.IsMatch(html))
             {
                 Debug.LogWarning(
-                    "[Arsmi] index.html has no data-orientation attribute to stamp — the platform will fall " +
-                    "back to the orientation on the game record. Reinstall the WebGL template to fix this.");
+                    "[Arsmi] index.html's <html> tag has no data-orientation attribute to stamp — the platform " +
+                    "will fall back to the orientation on the game record. Reinstall the WebGL template to fix this.");
                 return;
             }
 
-            File.WriteAllText(index, stamped);
+            File.WriteAllText(index, pattern.Replace(html, $"${{1}}{want}$2", 1));
         }
 
         /// <summary>What the menu (or -arsmiOrientation) last asked for. Landscape if never asked.</summary>
