@@ -680,6 +680,23 @@ public class GameHubBridge : MonoBehaviour
     public string Username { get; private set; }
     public string AvatarPath { get; private set; }
 
+    /// <summary>The player's email address, or null.
+    ///
+    /// Null unless the platform granted this specific game the per-game email opt-in
+    /// AND the game keeps its progress on its own backend. Every other game — and
+    /// every guest — sees null here forever, so treat it as a bonus and never as a
+    /// login key: <see cref="PlayerId"/> is the identifier that is always present.
+    ///
+    /// The address arrived in the user-state JSON before this property existed and was
+    /// silently discarded, so a Unity game appeared to be denied something the web SDK
+    /// was already handing out.</summary>
+    public string Email { get; private set; }
+
+    /// <summary>Whether the platform granted this game the email opt-in. Lets a game
+    /// tell "not shared with you" from "this player has no address on file" — both of
+    /// which leave <see cref="Email"/> null.</summary>
+    public bool EmailShared { get; private set; }
+
     /// <summary>Fires whenever the platform reports who is playing — including the
     /// moment a guest signs in mid-session.</summary>
     public event System.Action OnUserChanged;
@@ -691,6 +708,8 @@ public class GameHubBridge : MonoBehaviour
         Username = ReadJsonString(json, "username");
         DisplayName = ReadJsonString(json, "displayName");
         AvatarPath = ReadJsonString(json, "avatarPath");
+        Email = ReadJsonString(json, "email");
+        EmailShared = ReadJsonBool(json, "emailShared");
         OnUserChanged?.Invoke();
     }
     public void OnGameHubWalletState(string json)

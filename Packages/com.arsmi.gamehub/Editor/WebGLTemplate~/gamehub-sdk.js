@@ -452,6 +452,22 @@
       onFinished: function (handler) { return self.on("gamehub:ad:finished", handler); },
     };
 
+    /**
+     * Who is playing.
+     *
+     * get() -> {
+     *   loggedIn, userId, playerId, username, displayName, avatarPath, playerCode,
+     *   email, emailShared
+     * }
+     *
+     * `playerId` is the one to key your own records on: pseudonymous, stable for this
+     * player in this game, and deliberately NOT comparable across games.
+     *
+     * `email` is null unless the platform granted this game the per-game email opt-in
+     * and the game saves to its own backend — so it is null for most games, and for
+     * every guest. `emailShared` tells you which of those two it is. Never build login
+     * on it; it can be null forever and is not yours to assume.
+     */
     this.user = {
       get: function () {
         return Object.assign({ loggedIn: self._save.loggedIn }, self._user || {});

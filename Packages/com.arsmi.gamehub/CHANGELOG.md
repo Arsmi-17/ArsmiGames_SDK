@@ -5,6 +5,22 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-07-21
+
+### Added
+
+- `GameHubBridge.Email` and `GameHubBridge.EmailShared`. The platform had been sending the
+  player's address in the user-state payload all along; the bridge parsed four fields out of
+  that JSON and silently dropped this one, so a Unity game appeared to be denied something the
+  JS SDK was already handing out.
+
+  `Email` is null unless the game is in **own-backend** save mode AND holds the per-game
+  *"requires sharing of player email"* grant AND the player is signed in. `EmailShared`
+  separates "the platform withheld it" from "this player has no address on file".
+
+  **Key your records on `PlayerId`, never on `Email`** — an address can be null forever, and
+  the grant can be withdrawn. See "The player's email" in the README.
+
 ## [3.0.0] - 2026-07-14
 
 **Achievements are gone from the platform.** Not capped, not deprecated — removed. The tables,

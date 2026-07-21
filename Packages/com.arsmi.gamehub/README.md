@@ -159,7 +159,7 @@ subscription is real evidence). Silence never counts as a pass.
 | **Handshake** | **Required** | `Awake` introduces the game; the bridge replies and reports capabilities. Just have a `GameHubBridge` in the first scene. | — |
 | **Mute** | **Required** | `OnMuteChanged` → zero **all** audio (`AudioListener.volume = 0`). Subscribing acks it. | `SetMuted(true)` when your own sliders all reach 0; `false` when any rises. Skip if you have no volume UI. |
 | **Fullscreen** | **Required** | `OnFullscreenChanged` → subscribe to ack; re-fit only if you drive layout from code. | `RequestFullscreen()` — **only** if your game already has a fullscreen button. Do not add one. |
-| **Identity** | Required for **own-backend** save | `OnUserChanged` → read `hub.PlayerId` and key saves on it. | `RequestUserState()` to ask for it. |
+| **Identity** | Required for **own-backend** save | `OnUserChanged` → read `hub.PlayerId` and key saves on it. `hub.Email` is null unless your game was granted it — never key on it. | `RequestUserState()` to ask for it. |
 | **Save (Platform)** | Required if published **Platform save** | Re-read through `GetInt/GetString` after a change; do not cache stale values. | `SetInt/SetString` (or `ArsmiSave`). **Never store currency in a save** — it is on the player's machine and editable. |
 | **Wallet (Flux)** | Only if you sell for Flux | `OnWalletChanged` → update your HUD; `OnWalletError` → show the reason. | `WalletGet()` to read; `WalletSpend(n, reason)` to spend, and wait for `OnWalletChanged` before granting. **A game cannot earn Flux** — `WalletSet` was removed and the platform refuses it. |
 | **Rewarded ad** | Optional | `OnAdStarted` → pause; `OnAdFinished(rewarded)` → resume. | `ShowRewardedAd(id)`. Grant **your own** reward only when `rewarded` is true. **An ad pays no Flux.** |
@@ -214,6 +214,38 @@ var playerId = hub.PlayerId;   // null for guests
 `PlayerId` is pseudonymous and **per game**: stable forever for this player in this game, but
 two games cannot compare ids to work out they have the same person. Key your own records on
 it. Never use the raw platform user id for that.
+
+#### The player's email
+
+`hub.Email` carries the real address — but only if your game was **granted it**, and it is
+`null` otherwise:
+
+```csharp
+hub.OnUserChanged += () => {
+    if (hub.Email != null)          Send(hub.PlayerId, hub.Email);
+    else if (hub.EmailShared)       Log("Granted, but this player has no address on file.");
+    else                            Send(hub.PlayerId);   // the normal case
+};
+```
+
+Three things must all be true before an address arrives:
+
+1. **Own-backend save mode** — a game the platform saves for has no backend to send it to.
+2. **The per-game grant.** Tick *"This game requires sharing of player email"* in your game's
+   options when you submit. It is read at review, so tick it only if your backend genuinely
+   needs the address and be ready to say why.
+3. **The player is signed in.** Guests have no address.
+
+`EmailShared` tells you which side of that you are on: `false` means the platform withheld it,
+`true` with a null `Email` means the grant is in place but this particular player has none.
+
+> **Do not build your login on `Email`.** It can be null forever, for any player, and the grant
+> can be withdrawn. `PlayerId` is the identifier that is always there — key on it, and treat an
+> address as extra information you may or may not get.
+
+An email address identifies the same person across every game, which is exactly what `PlayerId`
+is designed to prevent. That is why it is a per-game decision rather than a flag you can set
+yourself, and why most games should never ask for it.
 
 `ArsmiBackendClient` is a worked example against Supabase — swap its two coroutines for your
 own endpoints and nothing else in the game changes. To try it, run
