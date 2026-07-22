@@ -5,6 +5,40 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-07-22
+
+Wire protocol 2. **This release does not talk to a platform on protocol 1, and a game built
+against 3.x does not talk to a platform on protocol 2.** Rebuild your game against this package.
+
+### Changed — BREAKING
+
+- Every event is now `gamehub:<domain>:<verb>`. The last four snake_case names are gone:
+  `set_mute` → `gamehub:audio:set`, `audio_muted` → `gamehub:audio:changed`,
+  `set_fullscreen` → `gamehub:screen:set`, `fullscreen_request` → `gamehub:screen:request`.
+  This only affects games that send or subscribe to raw event names through `Emit`/`on`; the C#
+  API (`OnMuteChanged`, `RequestFullscreen`, …) is unchanged.
+- `request_fullscreen` is deleted. It was a second spelling of `fullscreen_request` that the
+  platform accepted for long enough that both ended up in the documentation.
+- `gamehub:login:request` is deleted; use `gamehub:auth:login`. `RequestLogin()` is unchanged.
+
+### Added
+
+- Pocket Console, Challenge, leaderboard sharing and context are real C# events at last:
+  `OnPocketInput`, `OnPocketPlayerJoined`, `OnPocketPlayerReconnected`, `OnPocketPlayerLeft`,
+  `OnChallengeStart`, `OnChallengeLeaderboard`, `OnChallengeEnd`, `OnLeaderboardSharing`,
+  `OnContext`. These messages already arrived from the .jslib and went no further than a
+  `Debug.Log`, so the features were listed as supported and no Unity game could act on them.
+- A casino API: `CasinoRound`, `CasinoSeed`, `CasinoRotateSeed` and `OnCasinoResult`. Unity had
+  none at all. You send a bet; the server rolls and settles. There is no way to report an
+  outcome, by design.
+
+### Fixed
+
+- Save writes made before the player's save arrives are now dropped with a warning instead of
+  being accepted. On a browser the player has never used, everything local reads as "new", so a
+  write in that window carried a blank state and landed on top of the real account save still in
+  flight. That is not hypothetical — it replaced a player's progress with zeroes.
+
 ## [3.1.0] - 2026-07-21
 
 ### Added

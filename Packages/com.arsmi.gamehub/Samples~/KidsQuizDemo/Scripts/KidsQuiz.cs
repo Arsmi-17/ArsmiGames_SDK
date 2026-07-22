@@ -140,7 +140,30 @@ namespace ArsmiGames.Demo
                 hub.OnAdFinished += OnAdFinished;
             }
 
-            SetMode(SaveTarget.PlatformMirror);
+            // Follow what the PLATFORM published this game as, rather than assuming.
+            //
+            // This used to be a flat SetMode(PlatformMirror), so the demo announced "Saved
+            // locally and mirrored to your account" while running against a platform that had
+            // published it as own-backend and was storing nothing at all. It also meant the
+            // platform's own assessment screen reported "published as Platform save, but never
+            // used the save API" — correctly, because the demo had configured itself for a mode
+            // nobody had asked for. A reference implementation that misreports its own mode
+            // teaches every game that copies it to do the same.
+            SetMode(TargetForSaveMode(hub != null ? hub.SaveMode : null));
+
+            // The mode arrives with the save, which is not here on the first frame.
+            if (hub != null) hub.OnDataChanged += () => SetMode(TargetForSaveMode(hub.SaveMode));
+        }
+
+        /// <summary>The platform's save mode, expressed as this demo's own selector.</summary>
+        private static SaveTarget TargetForSaveMode(string saveMode)
+        {
+            switch (saveMode)
+            {
+                case "sdk": return SaveTarget.PlatformMirror;
+                case "backend": return SaveTarget.OwnBackend;
+                default: return SaveTarget.LocalOnly;
+            }
         }
 
         private void SetMode(SaveTarget target)

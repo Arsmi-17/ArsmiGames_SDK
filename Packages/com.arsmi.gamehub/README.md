@@ -108,14 +108,14 @@ find out whether a build will publish in seconds — not after a build-and-uploa
 comes back rejected.
 
 It is the same verdict the platform reaches on upload, reached the same way. The platform does
-not read your code; it *runs* your game and drives the bridge at it — sending a real `set_mute`
+not read your code; it *runs* your game and drives the bridge at it — sending a real `gamehub:audio:set`
 and waiting to hear your own handler answer — because a game that ignores the volume button and
 one that honours it look identical from the outside. So this tool does the same:
 
 1. Pick what you are **publishing as** (Platform save / Own backend / No save) — the save
    requirement differs for each, exactly as in the upload wizard.
 2. Press **Enter Play Mode & Test** (or enter Play Mode yourself and press **Run Test**).
-3. It reads what your game actually subscribed to, fires `set_mute` and `set_fullscreen` at the
+3. It reads what your game actually subscribed to, fires `gamehub:audio:set` and `gamehub:screen:set` at the
    live bridge to confirm the handlers run without throwing, and reports.
 
 The report has two parts:
@@ -367,7 +367,7 @@ public void OnVolumeChanged()
 ```
 
 The bridge drops no-op updates, so calling this on every slider tick sends nothing redundant
-and cannot loop against the platform's own `set_mute`. If your game has **no** volume controls,
+and cannot loop against the platform's own `gamehub:audio:set`. If your game has **no** volume controls,
 skip this direction — honouring `OnMuteChanged` is the only mandatory half.
 
 ## Fullscreen
@@ -397,7 +397,7 @@ around you:
 myFullscreenButton.onClick.AddListener(() => hub.RequestFullscreen());
 ```
 
-The platform goes fullscreen and sends `set_fullscreen` back, so your `OnFullscreenChanged`
+The platform goes fullscreen and sends `gamehub:screen:set` back, so your `OnFullscreenChanged`
 handler runs for both your button and the platform's — they behave identically. **If your game
 has no fullscreen button, do not add one for this.** The platform already provides one;
 acknowledging `OnFullscreenChanged` is all that is required.

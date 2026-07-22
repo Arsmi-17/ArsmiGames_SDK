@@ -24,6 +24,9 @@ public class GameHubBridge : MonoBehaviour
     [DllImport("__Internal")] private static extern void GameHubBridge_DataClear();
     [DllImport("__Internal")] private static extern void GameHubBridge_DataFlush();
     [DllImport("__Internal")] private static extern void GameHubBridge_ShowRewardedAd(string json);
+    [DllImport("__Internal")] private static extern void GameHubBridge_CasinoRound(string json);
+    [DllImport("__Internal")] private static extern void GameHubBridge_CasinoSeed();
+    [DllImport("__Internal")] private static extern void GameHubBridge_CasinoRotateSeed(string clientSeed);
 #endif
 
     public static GameHubBridge Instance { get; private set; }
@@ -94,7 +97,7 @@ public class GameHubBridge : MonoBehaviour
 
     // ---- Acknowledgements -------------------------------------------------------
     //
-    // The platform sends set_mute and set_fullscreen and then waits to hear what happened.
+    // The platform sends gamehub:audio:set and gamehub:screen:set and then waits to hear what happened.
     // It has to: a game *receiving* a message and honouring it sends nothing back, so from
     // the outside a game that mutes itself and a game that ignores the volume button look
     // exactly the same.
@@ -155,7 +158,7 @@ public class GameHubBridge : MonoBehaviour
     // ---- Mute -------------------------------------------------------------------
     //
     // Mute is two-way, and both directions matter. The platform's volume button sends
-    // set_mute, and the game has to honour it or the button is a lie. When the game
+    // gamehub:audio:set, and the game has to honour it or the button is a lie. When the game
     // mutes itself, it says so, and the platform's icon changes to match — otherwise
     // the player sees a speaker icon while hearing nothing.
 
@@ -168,8 +171,8 @@ public class GameHubBridge : MonoBehaviour
     /// <summary>Tells the platform the game muted or unmuted itself.</summary>
     public void SetMuted(bool muted)
     {
-        // The platform echoes its own set_mute back to us. Without this the echo would
-        // bounce out again as audio_muted and the two would ping-pong forever.
+        // The platform echoes its own gamehub:audio:set back to us. Without this the echo would
+        // bounce out again as gamehub:audio:changed and the two would ping-pong forever.
         if (muted == IsMuted) return;
         IsMuted = muted;
 
@@ -187,7 +190,7 @@ public class GameHubBridge : MonoBehaviour
         // Answer first, and answer whether or not the state actually changes. The platform
         // checks this game handles mute by sending the state it is already in — a probe that
         // is silent to the player. Acking only on a change would report that game as broken.
-        Ack("set_mute", OnMuteChanged != null);
+        Ack("gamehub:audio:set", OnMuteChanged != null);
 
         var muted = ReadJsonBool(json, "muted");
         if (muted == IsMuted) return;
@@ -378,10 +381,33 @@ public class GameHubBridge : MonoBehaviour
 
     public System.Collections.Generic.IEnumerable<string> Keys => _saveData.Keys;
 
+    /// <summary>
+    /// Rule 2 of the save contract: nothing is written before the player's save arrives.
+    ///
+    /// Until <see cref="DataReady"/> is true the game cannot know whether this player is new —
+    /// and on a browser they have never used, every local value reads as "new". A write made in
+    /// that window carries this browser's blank state and lands on top of the account save still
+    /// in flight. That is not hypothetical: it is how a real player's progress was replaced by
+    /// zeroes.
+    ///
+    /// Dropped and named, never queued. Queuing would preserve values the game computed from a
+    /// state it should not have acted on — the same bug, delayed.
+    /// </summary>
+    private bool RequireDataReady(string call)
+    {
+        if (DataReady) return true;
+        Debug.LogWarning(
+            $"[GameHubBridge] {call} was called before the player's save arrived, so it was dropped. " +
+            "Wait for DataReady (or OnDataChanged) before writing — until then a brand-new browser " +
+            "and a brand-new player look identical.");
+        return false;
+    }
+
     public void SetItem(string key, string value)
     {
         _usedSaveApi = true;
         if (string.IsNullOrEmpty(key)) return;
+        if (!RequireDataReady("SetItem")) return;
         _saveData[key] = value ?? "";
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_DataSetItem(key, value ?? "");
@@ -416,6 +442,7 @@ public class GameHubBridge : MonoBehaviour
     public void RemoveItem(string key)
     {
         if (string.IsNullOrEmpty(key)) return;
+        if (!RequireDataReady("RemoveItem")) return;
         _saveData.Remove(key);
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_DataRemoveItem(key);
@@ -426,6 +453,7 @@ public class GameHubBridge : MonoBehaviour
 
     public void ClearData()
     {
+        if (!RequireDataReady("ClearData")) return;
         _saveData.Clear();
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_DataClear();
@@ -591,10 +619,29 @@ public class GameHubBridge : MonoBehaviour
         return sb.ToString();
     }
 
-    public void OnGameHubChallengeStart(string json) => Debug.Log($"[GameHubBridge] Challenge start: {json}");
-    public void OnGameHubChallengeLeaderboard(string json) => Debug.Log($"[GameHubBridge] Challenge leaderboard: {json}");
-    public void OnGameHubChallengeEnd(string json) => Debug.Log($"[GameHubBridge] Challenge end: {json}");
-    public void OnGameHubContext(string json) => Debug.Log($"[GameHubBridge] Context: {json}");
+    /// <summary>A challenge is starting. Payload is the raw JSON the platform sent.</summary>
+    public event System.Action<string> OnChallengeStart;
+
+    /// <summary>Standings during a challenge.</summary>
+    public event System.Action<string> OnChallengeLeaderboard;
+
+    /// <summary>The challenge is over.</summary>
+    public event System.Action<string> OnChallengeEnd;
+
+    /// <summary>How this game was opened: role, preview, orientation and the rest.</summary>
+    public event System.Action<string> OnContext;
+
+    // These four arrive from the .jslib and, until package 4.0.0, went no further than a
+    // Debug.Log — the message reached C# and there was no way for a game to act on it. A
+    // Unity game could be told a challenge had started and had no means of hearing it.
+    //
+    // The payload stays raw JSON rather than a parsed type: these carry game-defined shapes,
+    // and UnityEngine.JsonUtility cannot deserialise the dictionaries most of them contain.
+    // Parse with whatever your game already uses.
+    public void OnGameHubChallengeStart(string json) => OnChallengeStart?.Invoke(json ?? "{}");
+    public void OnGameHubChallengeLeaderboard(string json) => OnChallengeLeaderboard?.Invoke(json ?? "{}");
+    public void OnGameHubChallengeEnd(string json) => OnChallengeEnd?.Invoke(json ?? "{}");
+    public void OnGameHubContext(string json) => OnContext?.Invoke(json ?? "{}");
     /// <summary>True while the platform is showing the game fullscreen.</summary>
     public bool IsFullscreen { get; private set; }
 
@@ -604,7 +651,7 @@ public class GameHubBridge : MonoBehaviour
 
     public void OnGameHubFullscreen(string json)
     {
-        Ack("set_fullscreen", OnFullscreenChanged != null);
+        Ack("gamehub:screen:set", OnFullscreenChanged != null);
 
         var next = ReadJsonBool(json, "fullscreen");
         if (next == IsFullscreen) return;
@@ -730,11 +777,94 @@ public class GameHubBridge : MonoBehaviour
         OnWalletError?.Invoke(message);
     }
 
-    public void OnGameHubPocketInput(string json) => Debug.Log($"[GameHubBridge] Pocket input: {json}");
-    public void OnGameHubPocketPlayerJoined(string json) => Debug.Log($"[GameHubBridge] Pocket player joined: {json}");
-    public void OnGameHubPocketPlayerReconnected(string json) => Debug.Log($"[GameHubBridge] Pocket player reconnected: {json}");
-    public void OnGameHubPocketPlayerLeft(string json) => Debug.Log($"[GameHubBridge] Pocket player left: {json}");
-    public void OnGameHubLeaderboardSharing(string json) => Debug.Log($"[GameHubBridge] Leaderboard sharing: {json}");
+    // ---- Casino -----------------------------------------------------------------
+    //
+    // Only for games an admin has registered as casino-class. Every other game's round is
+    // refused by the server, which is why this being present for everyone is harmless.
+    //
+    //     YOU SEND A BET. YOU NEVER SEND A PAYOUT.
+    //
+    // There is no parameter here for an outcome, a multiplier or a payout — not validated away,
+    // simply absent. The server owns the paytable and settles the money in one transaction;
+    // your game renders a result that has already happened.
+    //
+    // JS returns a promise and C# cannot await one, so every result — from Round, Seed and
+    // RotateSeed alike — comes back through OnCasinoResult. Match it to your round with the
+    // roundKey you sent.
+
+    /// <summary>The server's answer to a round, a seed request, or a rotation. Raw JSON:
+    /// { ok, outcome, multiplier, bet, payout, balance, nonce, roll, serverSeedHash, roundKey }.</summary>
+    public event System.Action<string> OnCasinoResult;
+
+    /// <summary>
+    /// Play one round. <paramref name="roundKey"/> is an idempotency key and is unique
+    /// server-side: retry with the same one after a dropped connection and you get the SAME
+    /// result back, not a second spin and not a second charge.
+    /// </summary>
+    public void CasinoRound(string mode, int bet, string roundKey)
+    {
+        if (string.IsNullOrEmpty(mode) || bet <= 0)
+        {
+            Debug.LogWarning("[GameHubBridge] CasinoRound needs a mode and a positive bet.");
+            return;
+        }
+
+        var json = $"{{\"mode\":\"{Escape(mode)}\",\"bet\":{bet},\"roundKey\":\"{Escape(roundKey ?? "")}\"}}";
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_CasinoRound(json);
+#else
+        Debug.Log($"[GameHubBridge] CasinoRound {json}");
+#endif
+    }
+
+    /// <summary>Asks for the current provably-fair commitment.</summary>
+    public void CasinoSeed()
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_CasinoSeed();
+#else
+        Debug.Log("[GameHubBridge] CasinoSeed");
+#endif
+    }
+
+    /// <summary>
+    /// Rotates the seed, which REVEALS the old server seed so the player can recompute every
+    /// round they played against it. Let them choose <paramref name="clientSeed"/> — that is the
+    /// half we do not control, and it is what makes the proof worth anything.
+    /// </summary>
+    public void CasinoRotateSeed(string clientSeed = null)
+    {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_CasinoRotateSeed(clientSeed ?? "");
+#else
+        Debug.Log($"[GameHubBridge] CasinoRotateSeed {clientSeed}");
+#endif
+    }
+
+    public void OnGameHubCasinoResult(string json) => OnCasinoResult?.Invoke(json ?? "{}");
+
+    /// <summary>A control was pressed on a player's phone. Raw JSON: the schema is yours.</summary>
+    public event System.Action<string> OnPocketInput;
+
+    /// <summary>A phone joined.</summary>
+    public event System.Action<string> OnPocketPlayerJoined;
+
+    /// <summary>A phone came back after dropping.</summary>
+    public event System.Action<string> OnPocketPlayerReconnected;
+
+    /// <summary>A phone left.</summary>
+    public event System.Action<string> OnPocketPlayerLeft;
+
+    /// <summary>The player asked to share a score card.</summary>
+    public event System.Action<string> OnLeaderboardSharing;
+
+    // Same story as the challenge handlers above: the input arrived and stopped at a log line,
+    // so Pocket Console was listed as a Unity feature that no Unity game could actually use.
+    public void OnGameHubPocketInput(string json) => OnPocketInput?.Invoke(json ?? "{}");
+    public void OnGameHubPocketPlayerJoined(string json) => OnPocketPlayerJoined?.Invoke(json ?? "{}");
+    public void OnGameHubPocketPlayerReconnected(string json) => OnPocketPlayerReconnected?.Invoke(json ?? "{}");
+    public void OnGameHubPocketPlayerLeft(string json) => OnPocketPlayerLeft?.Invoke(json ?? "{}");
+    public void OnGameHubLeaderboardSharing(string json) => OnLeaderboardSharing?.Invoke(json ?? "{}");
 
     private static string Escape(string value)
     {

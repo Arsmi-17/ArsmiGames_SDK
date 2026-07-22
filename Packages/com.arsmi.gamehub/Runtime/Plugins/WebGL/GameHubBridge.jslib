@@ -5,7 +5,7 @@ mergeInto(LibraryManager.library, {
 
     // Unity mode turns OFF the SDK's automatic wiring detection, and its automatic acks.
     //
-    // Below, this file subscribes to set_mute, set_fullscreen and the rest on the game's
+    // Below, this file subscribes to gamehub:audio:set, gamehub:screen:set and the rest on the game's
     // behalf, unconditionally — it has to, it cannot know what the C# will want. If the SDK
     // inferred "the game handles mute" from those subscriptions, EVERY Unity build would look
     // compliant, including one whose C# ignores the platform's volume button completely. So
@@ -41,10 +41,10 @@ mergeInto(LibraryManager.library, {
       if (window.GameHubBridge.onContext) window.GameHubBridge.onContext(function (payload) {
         window.__gameHubUnitySend("OnGameHubContext", payload);
       });
-      window.GameHubBridge.on("set_mute", function (payload) {
+      window.GameHubBridge.on("gamehub:audio:set", function (payload) {
         window.__gameHubUnitySend("OnGameHubMuted", payload);
       });
-      window.GameHubBridge.on("set_fullscreen", function (payload) {
+      window.GameHubBridge.on("gamehub:screen:set", function (payload) {
         window.__gameHubUnitySend("OnGameHubFullscreen", payload);
       });
       window.GameHubBridge.on("gamehub:user:state", function (payload) {
@@ -94,6 +94,12 @@ mergeInto(LibraryManager.library, {
       window.GameHubBridge.on("gamehub:ad:state", function (payload) {
         window.__gameHubUnitySend("OnGameHubAdState", payload);
       });
+
+      // The save is requested by the SDK itself, from setEngine("unity") / create({engine}) —
+      // see _askForSave in gamehub-sdk.js. It deliberately does NOT happen here: this file is
+      // compiled into the WebGL build and cannot change without a rebuild, whereas the SDK is
+      // loaded from the platform's origin at run time, so putting it there fixes builds that
+      // already exist.
     }
   },
 
@@ -157,7 +163,7 @@ mergeInto(LibraryManager.library, {
   /**
    * C# answering for a platform message this file handed it.
    *
-   * The handlers above subscribe to set_mute and set_fullscreen unconditionally, so the SDK
+   * The handlers above subscribe to gamehub:audio:set and gamehub:screen:set unconditionally, so the SDK
    * cannot tell from JavaScript whether the GAME is listening — only C# knows that. It parks
    * the message id and waits for this call. See UNITY_ACKS in the SDK.
    */
@@ -210,5 +216,38 @@ mergeInto(LibraryManager.library, {
   GameHubBridge_LeaderboardScore: function (jsonPtr) {
     var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
     window.GameHubBridge && window.GameHubBridge.leaderboard && window.GameHubBridge.leaderboard.submitScore(payload);
+  },
+
+  // ---- Casino ---------------------------------------------------------------
+  //
+  // The three casino calls return promises in JS, and C# cannot await one. So each result is
+  // sent back the same way every other inbound message is — through SendMessage — and C# raises
+  // an event. The roundKey travels in the payload, which is what lets a game match a result to
+  // the round it sent.
+  //
+  // A game still cannot report an outcome. There is no jslib function that sends one, for the
+  // same reason there is no such SDK method: the server rolls, and the game renders a result
+  // that has already happened.
+  GameHubBridge_CasinoRound: function (jsonPtr) {
+    var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
+    if (!window.GameHubBridge || !window.GameHubBridge.casino) return;
+    window.GameHubBridge.casino.round(payload).then(function (result) {
+      window.__gameHubUnitySend("OnGameHubCasinoResult", result);
+    });
+  },
+
+  GameHubBridge_CasinoSeed: function () {
+    if (!window.GameHubBridge || !window.GameHubBridge.casino) return;
+    window.GameHubBridge.casino.seed().then(function (result) {
+      window.__gameHubUnitySend("OnGameHubCasinoResult", result);
+    });
+  },
+
+  GameHubBridge_CasinoRotateSeed: function (seedPtr) {
+    if (!window.GameHubBridge || !window.GameHubBridge.casino) return;
+    var clientSeed = UTF8ToString(seedPtr) || null;
+    window.GameHubBridge.casino.rotateSeed(clientSeed).then(function (result) {
+      window.__gameHubUnitySend("OnGameHubCasinoResult", result);
+    });
   },
 });
