@@ -209,6 +209,37 @@ C# does anything with it, so the platform cannot tell "supports Pocket Console" 
 it" by watching JavaScript. Only `OnPocketInput` proves it: a game must subscribe to it, and the
 publish gate will not accept a game's Pocket Console support until it does — see below.
 
+### Reading a press
+
+`OnPocketInput` hands you a JSON string, and **the control is nested**. This is the real payload,
+captured from a live session:
+
+```json
+{ "type": "pocket_input", "playerSlot": 1, "sequence": 4,
+  "input": { "control": "start", "pressed": true, "buttons": { "start": true } } }
+```
+
+So:
+
+```csharp
+[Serializable] class Envelope { public int playerSlot; public Body input; }
+[Serializable] class Body     { public string control; public bool pressed; }
+
+hub.OnPocketInput += json => {
+    var press = JsonUtility.FromJson<Envelope>(json);
+    if (press?.input == null || !press.input.pressed) return;   // releases are not commands
+    Act(press.input.control, press.playerSlot);
+};
+```
+
+Reading `control` off the top level yields `null` and every press is silently ignored — while the
+platform still reports `handled: true`, because the SDK acked receipt long before your code looked
+at it. The symptom is a controller that visibly connects, logs perfect presses, and moves nothing.
+It cost a full round of real-phone testing to find, so it is written down here.
+
+Act on `pressed: true` only, unless you genuinely want press-and-hold. A controller sends both
+edges — the publish gate requires it — but each press is one command.
+
 ### Moving a phone between screens (4.2.0)
 
 A controller declares every screen it can show in its `pocket.controller.json`; your game names
