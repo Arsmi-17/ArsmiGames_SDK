@@ -17,6 +17,7 @@ public class GameHubBridge : MonoBehaviour
     [DllImport("__Internal")] private static extern void GameHubBridge_ChallengeResult(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_PocketReady(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_PocketSchema(string json);
+    [DllImport("__Internal")] private static extern void GameHubBridge_PocketState(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_LeaderboardDefine(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_LeaderboardScore(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_DataSetItem(string key, string value);
@@ -295,6 +296,57 @@ public class GameHubBridge : MonoBehaviour
     {
 #if UNITY_WEBGL && !UNITY_EDITOR
         GameHubBridge_PocketSchema(string.IsNullOrEmpty(json) ? "{}" : json);
+#endif
+    }
+
+    /// <summary>
+    /// Move every phone to a screen the controller declared.
+    /// </summary>
+    /// <param name="screen">
+    /// A screen id from the controller's pocket.controller.json. Arbitrary — the protocol knows no
+    /// screen names and no game genres. An id the controller did not declare leaves the phone on
+    /// whatever it is showing, and the publish gate refuses the build.
+    /// </param>
+    /// <param name="dataJson">
+    /// Yours, and opaque to every hop between here and the phone. A raw JSON string rather than an
+    /// object because JsonUtility cannot serialise the dictionaries this normally carries — the
+    /// same reason every other payload on this side is a string.
+    /// </param>
+    public void PocketState(string screen, string dataJson = "{}")
+    {
+        SendPocketState("null", screen, dataJson);
+    }
+
+    /// <summary>
+    /// Move ONE seat, leaving the others where they are.
+    ///
+    /// This and <see cref="PocketState"/> are the whole vocabulary. A game whose first finisher
+    /// ends it for everyone calls PocketState; a game where the others keep playing calls this for
+    /// the seat that finished. A race needs both in one game — seat-targeted as players cross the
+    /// line, then PocketState("ranking") once all are done — which is why there is no mode to
+    /// declare anywhere.
+    /// </summary>
+    public void PocketSeatState(int slot, string screen, string dataJson = "{}")
+    {
+        if (slot < 1)
+        {
+            // Logged, not thrown: a game must not die because it computed a seat wrong, and a
+            // silent drop would be worse than either.
+            Debug.LogWarning($"[GameHubBridge] PocketSeatState ignored: slot must be 1 or more, got {slot}.");
+            return;
+        }
+
+        SendPocketState(slot.ToString(System.Globalization.CultureInfo.InvariantCulture), screen, dataJson);
+    }
+
+    private void SendPocketState(string slotLiteral, string screen, string dataJson)
+    {
+        var data = string.IsNullOrEmpty(dataJson) ? "{}" : dataJson;
+        var json = $"{{\"slot\":{slotLiteral},\"screen\":\"{Escape(screen)}\",\"data\":{data}}}";
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_PocketState(json);
+#else
+        Debug.Log($"[GameHubBridge] PocketState {json}");
 #endif
     }
 

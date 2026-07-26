@@ -209,6 +209,37 @@ C# does anything with it, so the platform cannot tell "supports Pocket Console" 
 it" by watching JavaScript. Only `OnPocketInput` proves it: a game must subscribe to it, and the
 publish gate will not accept a game's Pocket Console support until it does — see below.
 
+### Moving a phone between screens (4.2.0)
+
+A controller declares every screen it can show in its `pocket.controller.json`; your game names
+which one is active. Two calls, and they are the whole vocabulary:
+
+```csharp
+hub.PocketState("car-select", "{\"cars\":[\"Neon\",\"Rusty\"]}");   // every seat
+hub.PocketSeatState(2, "finished", "{\"rank\":1}");                // one seat
+```
+
+Screen ids are whatever the controller's manifest declares. There are no reserved names, no
+required screens, and no ordering — you may move any seat to any declared screen at any time.
+`dataJson` is yours and is passed through untouched; it reaches the controller as the `data` of a
+`pocket:screen` event.
+
+You never declare whether your game is "seat-based". You express that by which call you make: a
+game whose first finisher ends the round for everyone calls `PocketState`; a game where the others
+keep playing calls `PocketSeatState` for the seat that finished. A race wants both — seat-targeted
+as players cross the line, then `PocketState("ranking")` once all are done.
+
+`dataJson` is a raw JSON string, not an object, for the same reason every other payload on this
+side is: `JsonUtility` cannot serialise the dictionaries these normally carry.
+
+The server keeps each seat's screen and replays it when a phone joins or reconnects, so a player
+who reloads mid-round comes back where they were. Setting a screen for a seat nobody has taken yet
+is fine — it is delivered when that seat joins.
+
+Two things the publish gate refuses: a declared screen your game never drives the controller into
+(nothing on it was tested), and a screen id your game sends that the manifest does not declare
+(the phone would keep its current screen and the player would be stuck).
+
 ## Casino
 
 Only for games an admin has registered as casino-class; every other game's round is refused by

@@ -208,6 +208,25 @@ mergeInto(LibraryManager.library, {
     window.GameHubBridge && window.GameHubBridge.pocket.setControllerSchema(payload);
   },
 
+  /**
+   * Move a phone to a screen the controller declared.
+   *
+   * C# hands the whole call over as one JSON string, the same way PocketSchema does, because
+   * JsonUtility cannot serialise the dictionaries a game's `data` will contain — so building the
+   * envelope in C# and parsing it here is the only shape that works on this side.
+   *
+   * `slot: null` means every seat; a number means that seat alone.
+   */
+  GameHubBridge_PocketState: function (jsonPtr) {
+    var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
+    if (!window.GameHubBridge || !window.GameHubBridge.pocket) return;
+    if (payload.slot === null || payload.slot === undefined) {
+      window.GameHubBridge.pocket.setState(payload.screen, payload.data);
+    } else {
+      window.GameHubBridge.pocket.setSeatState(payload.slot, payload.screen, payload.data);
+    }
+  },
+
   GameHubBridge_LeaderboardDefine: function (jsonPtr) {
     var payload = JSON.parse(UTF8ToString(jsonPtr) || "{}");
     window.GameHubBridge && window.GameHubBridge.leaderboard && window.GameHubBridge.leaderboard.define(payload);
