@@ -5,6 +5,69 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-07-26
+
+### Added
+
+- A second sample: **Pocket Console Demo**. A phone as a controller with no game underneath it —
+  four screens, four seats, and both ways of addressing them. It ships its own HTML controller
+  beside the scene, so the pair can be run together without writing either half. Import it from
+  *Arsmi Games ▸ Import Pocket Console sample*, then read its `README.md`.
+
+  It exists because every other example of this API is embedded in a game, and the two mistakes that
+  cost the most are invisible there: the input payload is nested under `input`, and `OnPocketInput`
+  must be subscribed *before* `PocketReady` or the bridge reports the game as not supporting pocket
+  input at all. Both are called out in the sample where you meet them.
+
+## [4.3.0] - 2026-07-26
+
+### Fixed
+
+- `PocketState` and `PocketSeatState` now reach a phone from the **Unity Editor**, not only from a
+  WebGL build. Outside WebGL there is no `.jslib`, so both calls ended at a `Debug.Log`: presses
+  arrived in play mode and nothing came back, which reads as a broken state channel rather than as a
+  WebGL-only path. Reported from a real session whose Console showed
+  `[GameHubBridge] PocketState {"slot":null,"screen":"menu","data":{}}` while the phone never moved.
+
+### Added
+
+- `GameHubBridge.OnPocketStateEnvelope` — raised in the non-WebGL branch with the envelope exactly as
+  the Bridge built it. `PocketEditorLink` subscribes and forwards it to the local harness, so the
+  Editor and WebGL paths carry an identical payload and a screen cannot work in one and not the
+  other. Games do not subscribe to this; the Editor companion does.
+
+## [4.2.0] - 2026-07-26
+
+### Added
+
+- Games can move a phone between screens. Two calls, and they are the whole vocabulary:
+
+  ```csharp
+  hub.PocketState(screen, dataJson);            // every seat
+  hub.PocketSeatState(slot, screen, dataJson);  // one seat; the others carry on
+  ```
+
+  A game never declares whether it is seat-based — it expresses that by which call it makes. One
+  whose first finisher ends the round for everyone calls `PocketState`; one where the others keep
+  playing targets the seat that finished. A race needs both, which is why a mode flag would have
+  been self-contradictory.
+
+  No new wiring bit: `pocket` already means "handles phone input", and pushing a screen is not
+  handling input. Two bits for one capability is how a game ends up reported as supporting Pocket
+  Console when it reads nothing.
+
+  A bad seat number is logged, not thrown. A game must not die because it computed a seat wrong,
+  and a silent drop would be worse than either.
+
+## [4.1.0] - 2026-07-26
+
+### Fixed
+
+- Pocket input wiring is reported from C#, honestly. The `.jslib` subscribes to pocket input on the
+  game's behalf, so **every** Unity build acked `handled: true` whether or not its C# did anything
+  with the press — and `ReportWiring` had no `pocket` key at all, so there was no honest signal to
+  read instead. A game that ignored every press was indistinguishable from one that handled them.
+
 ## [4.0.0] - 2026-07-22
 
 Wire protocol 2. **This release does not talk to a platform on protocol 1, and a game built

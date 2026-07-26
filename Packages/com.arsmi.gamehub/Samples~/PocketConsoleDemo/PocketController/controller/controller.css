@@ -1,0 +1,51 @@
+/* Yours to edit. Sized for a thumb, not a mouse. */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+  background: #0b0b0f;
+  color: #f4f4f5;
+  font-family: system-ui, -apple-system, sans-serif;
+  /* Without these, dragging a thumb across the pad scrolls the page and selects text. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+.wrap { display: flex; flex-direction: column; height: 100%; padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom)); gap: 16px; }
+/* Set from the seat this phone took, so the colour round your name in the game and the colour
+   on this pad come from the same table. Falls back until gamehub:pocket:init arrives. */
+:root { --seat-color: #5c7cfa; }
+.top { display: flex; align-items: center; gap: 12px; border-top: 3px solid var(--seat-color); padding-top: 10px; }
+.title { display: flex; flex-direction: column; line-height: 1.1; }
+.title span { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; opacity: .55; }
+.title strong { font-size: 15px; }
+.slot { margin-left: auto; font-weight: 700; color: var(--seat-color); }
+/* The game decides which screen is showing; everything not showing is [hidden]. !important
+   because a screen section also carries display:flex below, which would otherwise win. */
+[hidden] { display: none !important; }
+.screens { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.screen { flex: 1; display: flex; flex-direction: column; gap: 16px; min-height: 0; }
+.persistent { display: flex; gap: 12px; }
+.persistent .btn { flex: 1; min-height: 56px; font-size: 16px; }
+.back { background: none; border: 0; color: inherit; font: inherit; opacity: .7; padding: 8px; }
+.dpad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.actions { display: flex; gap: 12px; margin-top: auto; }
+.actions .btn { flex: 1; }
+.btn {
+  min-height: 72px;
+  border: 1px solid #26262e;
+  border-radius: 16px;
+  background: #16161c;
+  color: inherit;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 700;
+}
+.btn.active { background: #2a2a34; transform: translateY(2px) scale(.98); }
+/* The generated dpad places arrows in a cross when the usual four ids are present. */
+.btn.up { grid-column: 2; grid-row: 1; }
+.btn.left { grid-column: 1; grid-row: 2; }
+.btn.right { grid-column: 3; grid-row: 2; }
+.btn.down { grid-column: 2; grid-row: 3; }

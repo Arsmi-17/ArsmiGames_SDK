@@ -1,0 +1,26 @@
+{
+  "title": "Pocket Console Demo",
+  "slug": "pocket-console-demo",
+  "maxPlayers": 4,
+  "entry": "controller/index.html",
+  "game": {},
+  "screens": [
+    { "id": "lobby", "default": true },
+    { "id": "play" },
+    { "id": "waiting" },
+    { "id": "over" }
+  ],
+  "controls": [
+    { "id": "start", "label": "Play", "group": "actions", "screen": "lobby" },
+
+    { "id": "up",    "label": "▲", "group": "dpad", "screen": "play" },
+    { "id": "down",  "label": "▼", "group": "dpad", "screen": "play" },
+    { "id": "left",  "label": "◀", "group": "dpad", "screen": "play" },
+    { "id": "right", "label": "▶", "group": "dpad", "screen": "play" },
+    { "id": "done",  "label": "I'm done", "group": "actions", "screen": "play" },
+
+    { "id": "back",  "label": "Keep playing", "group": "actions", "screen": "waiting" },
+
+    { "id": "again", "label": "Again", "group": "actions", "screen": "over" }
+  ]
+}

@@ -27,6 +27,11 @@
       "displayName": "Kids Quiz Demo",
       "description": "A small quiz that exercises every SDK call: all three save modes, a rewarded ad, wallet, leaderboards, and a live log of everything crossing the bridge. Import it, then open Scenes/ArsmiSdkDemo.",
       "path": "Samples~/KidsQuizDemo"
+    },
+    {
+      "displayName": "Pocket Console Demo",
+      "description": "A phone as a controller, with no game underneath it: four screens, four seats, and both ways of addressing them — PocketState moves every phone, PocketSeatState moves one. Ships its own HTML controller. Import it, then open Scenes/ArsmiPocketConsoleDemo and read README.md.",
+      "path": "Samples~/PocketConsoleDemo"
     }
   ]
 }

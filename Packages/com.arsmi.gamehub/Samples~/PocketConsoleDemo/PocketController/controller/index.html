@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <title>Pocket Console Demo — controls</title>
+    <link rel="stylesheet" href="controller.css" />
+  </head>
+  <body>
+    <main class="wrap">
+      <header class="top">
+        <button class="back" type="button" data-back>← Back</button>
+        <div class="title">
+          <span>Pocket Console</span>
+          <strong id="game-title">Pocket Console Demo</strong>
+        </div>
+        <span class="slot" id="slot"></span>
+      </header>
+      <div class="screens">
+        <section class="screen" data-screen="lobby">
+          <section class="actions" aria-label="Actions">
+            <button class="btn start" type="button" data-control="start">Play</button>
+          </section>
+        </section>
+        <section class="screen" data-screen="play" hidden>
+          <section class="dpad" aria-label="Direction">
+            <button class="btn up" type="button" data-control="up">▲</button>
+            <button class="btn down" type="button" data-control="down">▼</button>
+            <button class="btn left" type="button" data-control="left">◀</button>
+            <button class="btn right" type="button" data-control="right">▶</button>
+          </section>
+          <section class="actions" aria-label="Actions">
+            <button class="btn done" type="button" data-control="done">I&#39;m done</button>
+          </section>
+        </section>
+        <section class="screen" data-screen="waiting" hidden>
+          <section class="actions" aria-label="Actions">
+            <button class="btn back" type="button" data-control="back">Keep playing</button>
+          </section>
+        </section>
+        <section class="screen" data-screen="over" hidden>
+          <section class="actions" aria-label="Actions">
+            <button class="btn again" type="button" data-control="again">Again</button>
+          </section>
+        </section>
+      </div>
+    </main>
+    <script src="controller.js"></script>
+  </body>
+</html>

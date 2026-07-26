@@ -187,6 +187,12 @@ Phones as controllers, head-to-head challenges, and the rest. Until package 4.0.
 messages reached C# and stopped at a `Debug.Log` — the feature was advertised and no Unity game
 could act on it. They are real events now.
 
+> **Pocket Console is more than the calls below.** Your game also ships a *controller* — a folder of
+> plain HTML that renders the pad — and it is tested with a local harness and checked by a publish
+> gate before it can ship. All of that is in **[POCKET-CONSOLE.md](POCKET-CONSOLE.md)**, beside this
+> file. There is also a runnable sample with no game in it: **Arsmi Games ▸ Import Pocket Console
+> sample**. Start there; this section is the C# surface only.
+
 ```csharp
 event Action<string> OnPocketInput, OnPocketPlayerJoined, OnPocketPlayerReconnected, OnPocketPlayerLeft;
 event Action<string> OnChallengeStart, OnChallengeLeaderboard, OnChallengeEnd;
@@ -195,6 +201,8 @@ event Action<string> OnContext;
 
 void PocketReady(int maxPlayers, string layout = "dpad-buttons", string schemaJson = "{}");
 void PocketSchema(string json);
+void PocketState(string screen, string dataJson = "{}");             // every seat
+void PocketSeatState(int slot, string screen, string dataJson = "{}"); // one seat
 void ChallengeReady(int maxPlayers, string mode = "ranked", bool ranked = true);
 void ChallengeState(string json);
 void ChallengeResult(string json);
@@ -266,6 +274,23 @@ side is: `JsonUtility` cannot serialise the dictionaries these normally carry.
 The server keeps each seat's screen and replays it when a phone joins or reconnects, so a player
 who reloads mid-round comes back where they were. Setting a screen for a seat nobody has taken yet
 is fine — it is delivered when that seat joins.
+
+Do **not** push a screen from your `OnPocketPlayerJoined` handler. Replay has already done it, and a
+second push for the same fact is a second source of truth for it.
+
+An all-seats push clears any per-seat overrides, because it is a new baseline. Without that, a seat
+left on `"finished"` from the last round would stay there for the whole of the next one.
+
+### In the Editor (4.3.0)
+
+Outside WebGL there is no `.jslib`, so both calls above would end at a `Debug.Log` — presses would
+reach your game in play mode and nothing would come back, which reads as a broken channel rather
+than as a WebGL-only path. Since 4.3.0 the bridge raises `OnPocketStateEnvelope` in that branch and
+the local harness's `PocketEditorLink.cs` forwards it, so your phone really does change screen while
+you iterate.
+
+`OnPocketStateEnvelope` exists for that companion, not for your game — the envelope it carries is
+what your own `PocketState` call just produced. Ignore it unless you are writing tooling.
 
 Two things the publish gate refuses: a declared screen your game never drives the controller into
 (nothing on it was tested), and a screen id your game sends that the manifest does not declare
