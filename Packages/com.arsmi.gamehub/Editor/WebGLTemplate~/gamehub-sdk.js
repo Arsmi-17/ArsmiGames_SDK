@@ -154,6 +154,7 @@
       wallet: false,
       ads: false,
       leaderboard: false,
+      pocket: false,      // subscribed to gamehub:pocket:input (a phone as controller)
     };
     // Unity reports its own wiring from C# — the .jslib subscribes to everything on the
     // game's behalf, so inferring from JS handlers there would mark every Unity game as
@@ -808,6 +809,7 @@
     "gamehub:ad:finished": "ads",
     "gamehub:leaderboard:sharing": "leaderboard",
     "gamehub:audio:muted": "mute",
+    "gamehub:pocket:input": "pocket",
   };
 
   GameHubSDK.prototype._wire = function (name) {

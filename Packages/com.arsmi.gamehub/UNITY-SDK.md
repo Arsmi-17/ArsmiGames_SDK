@@ -204,6 +204,11 @@ The payloads are raw JSON strings, deliberately. They carry game-defined shapes,
 `JsonUtility` cannot deserialise the dictionaries most of them contain — parse with whatever
 your game already uses.
 
+The `.jslib` subscribes to `gamehub:pocket:input` on every game's behalf, whether or not the
+C# does anything with it, so the platform cannot tell "supports Pocket Console" from "ignores
+it" by watching JavaScript. Only `OnPocketInput` proves it: a game must subscribe to it, and the
+publish gate will not accept a game's Pocket Console support until it does — see below.
+
 ## Casino
 
 Only for games an admin has registered as casino-class; every other game's round is refused by
@@ -239,7 +244,11 @@ back, not a second spin and not a second charge.
 3. If you save: boot gated on `DataReady`, writes after it, complete snapshots.
 4. `gamehub-sdk.js` present in the WebGL template.
 5. Console clean — no "called before the player's save arrived" warnings.
+6. If you support phones as controllers: `OnPocketInput` subscribed. Nothing else proves it —
+   the `.jslib` acks `handled:true` for every Unity build regardless.
 
-The platform reports what you wired up one frame into the first scene. If you subscribe later
-than that, call `ReportWiring()` yourself afterwards or you will be assessed as not handling
-what you actually handle.
+The platform reports what you wired up one frame into the first scene, as a JSON object with
+one boolean per requirement: `mute`, `fullscreen`, `data`, `user`, `wallet`, `ads`,
+`leaderboard`, and, since package 4.1.0, `pocket` — true only when `OnPocketInput` has a
+subscriber. If you subscribe later than that, call `ReportWiring()` yourself afterwards or you
+will be assessed as not handling what you actually handle.

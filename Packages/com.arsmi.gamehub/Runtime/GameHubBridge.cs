@@ -81,7 +81,8 @@ public class GameHubBridge : MonoBehaviour
             $"\"user\":{Bool(OnUserChanged != null)}," +
             $"\"wallet\":{Bool(OnWalletChanged != null)}," +
             $"\"ads\":{Bool(OnAdFinished != null)}," +
-            $"\"leaderboard\":{Bool(_definedLeaderboard)}" +
+            $"\"leaderboard\":{Bool(_definedLeaderboard)}," +
+            $"\"pocket\":{Bool(OnPocketInput != null)}" +
             "}";
 
 #if UNITY_WEBGL && !UNITY_EDITOR
