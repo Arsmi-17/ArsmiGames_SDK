@@ -339,6 +339,18 @@ public class GameHubBridge : MonoBehaviour
         SendPocketState(slot.ToString(System.Globalization.CultureInfo.InvariantCulture), screen, dataJson);
     }
 
+    /// <summary>
+    /// The PocketState envelope, raised only when there is no .jslib to send it through.
+    ///
+    /// In a WebGL build the call goes straight out and this never fires. Everywhere else — the
+    /// Editor above all — it is the only way the envelope can leave the process, and the local
+    /// test harness's Editor link subscribes to it so a developer can drive their phone's screens
+    /// in play mode instead of having to make a WebGL build first.
+    ///
+    /// Not for game code. A game that wants to know which screen it asked for already knows.
+    /// </summary>
+    public event System.Action<string> OnPocketStateEnvelope;
+
     private void SendPocketState(string slotLiteral, string screen, string dataJson)
     {
         var data = string.IsNullOrEmpty(dataJson) ? "{}" : dataJson;
@@ -347,6 +359,10 @@ public class GameHubBridge : MonoBehaviour
         GameHubBridge_PocketState(json);
 #else
         Debug.Log($"[GameHubBridge] PocketState {json}");
+        // Without this the call ends at the log line and a phone never changes screen in play
+        // mode — presses reach the game but nothing reaches the phone, which reads as the state
+        // channel being broken rather than as WebGL-only.
+        OnPocketStateEnvelope?.Invoke(json);
 #endif
     }
 
