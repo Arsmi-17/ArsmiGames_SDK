@@ -167,6 +167,11 @@ namespace ArsmiGames.EditorTools
             VerifySdkIsCurrent(bundled);
             StampOrientation(index);
 
+            // Recorded here, not in the menu path, so a build made with Unity's own Build button is
+            // measured too. The report is the only place per-asset packed sizes exist — Unity
+            // discards them with the BuildReport when the build ends.
+            ArsmiBuildSizeRecord.Capture(report);
+
             Debug.Log($"[Arsmi] WebGL build verified: SDK {SdkVersion(File.ReadAllText(bundled))}, " +
                       $"{ChosenOrientation().ToString().ToLowerInvariant()}. → {output}");
         }
@@ -272,8 +277,25 @@ namespace ArsmiGames.EditorTools
 
         // %&b — Ctrl+Alt+B. (% = Ctrl, & = Alt, # = Shift.) It was Ctrl+Shift+B, which Unity
         // itself uses for Build Settings on some layouts, and which several IDEs take.
+        /// <summary>
+        /// Opens the build window rather than building.
+        ///
+        /// It used to ask for orientation in a modal dialog and take the scene list silently from
+        /// Build Settings. Orientation is recoverable — a wrongly shaped frame is obvious and one
+        /// rebuild away. Which scene sits at index 0 is not: the build succeeds, uploads, and starts
+        /// on the wrong screen, with nothing anywhere saying why. So the list is shown before the
+        /// folder picker, next to the settings the platform requires.
+        /// </summary>
         [MenuItem("Arsmi Games/Build WebGL… %&b", priority = 0)]
         public static void BuildWebGL()
+        {
+            ArsmiBuildWindow.Open();
+        }
+
+        /// <summary>
+        /// The build itself. Called by the window once the scenes and orientation are settled.
+        /// </summary>
+        public static void RunInteractiveBuild()
         {
             var scenes = EditorBuildSettings.scenes
                 .Where(scene => scene.enabled)
@@ -286,32 +308,6 @@ namespace ArsmiGames.EditorTools
                     "No scenes are enabled in Build Settings, so the build would be empty.", "OK");
                 return;
             }
-
-            // Asked before the folder picker, so the question is answered while you are still
-            // thinking about the build rather than after you have committed to a location.
-            //
-            // Unity's dialog gives us two buttons and a cancel. The default (the "ok" button)
-            // is whichever was chosen last, so building the same game repeatedly is one Enter.
-            var last = ArsmiWebGLBuildProcessor.ChosenOrientation();
-            var portraitWasLast = last == Orientation.Portrait;
-
-            var answer = EditorUtility.DisplayDialogComplex(
-                "Build WebGL",
-                "Which way up is this game played?\n\n" +
-                "It is written into index.html, and the platform sizes the frame around the game to match. " +
-                "Getting it wrong does not break the build — the game just runs in a frame the wrong shape.\n\n" +
-                $"Last build: {last.ToString().ToLowerInvariant()}.",
-                portraitWasLast ? "Portrait" : "Landscape",   // ok      — repeat last
-                "Cancel",                                      // cancel
-                portraitWasLast ? "Landscape" : "Portrait");   // alt     — the other one
-
-            if (answer == 1) return; // cancel
-
-            var orientation = answer == 0
-                ? last
-                : (portraitWasLast ? Orientation.Landscape : Orientation.Portrait);
-
-            EditorPrefs.SetString(ArsmiWebGLBuildProcessor.OrientationKey, orientation.ToString());
 
             var previous = EditorPrefs.GetString(LastPathKey, "");
             var suggestedName = string.IsNullOrEmpty(previous)

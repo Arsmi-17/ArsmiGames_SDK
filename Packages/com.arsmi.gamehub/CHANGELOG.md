@@ -5,6 +5,50 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] - 2026-07-27
+
+### Added
+
+- **A build window** in front of *Arsmi Games ▸ Build WebGL…*, replacing the modal that asked one
+  question. It shows the scenes going into the build, marks which one **loads first**, and gives
+  you one button to change it.
+
+  Orientation was the only thing the old dialog asked about, and it is the one thing that is
+  cheap to get wrong — a frame the wrong shape is obvious and one rebuild away. Scene order is
+  the opposite: the build succeeds, uploads, and starts on the wrong screen, and nothing anywhere
+  says why. Worth noting the window marks *loads first* rather than numbering rows, because Unity
+  numbers disabled rows too, so its `0` is not always the scene that runs.
+
+  Opening the window also turns **decompression fallback** on when it is off, and leaves a notice
+  saying it did. The build already forced this, but only after you had committed to a build and
+  picked a folder.
+
+- **Arsmi Games ▸ Build Size Report** — where the build's size went, and what to do about it.
+  Per-asset packed sizes from the last build, the heaviest files on disk, assets no enabled scene
+  reaches, and the settings and bulk import actions that shrink a build.
+
+  Packed size is recorded during the build because that is the only time it exists:
+  `BuildReport.packedAssets` lives inside the post-process callback and Unity discards it
+  afterwards. It is worth having rather than sorting by file size, which is the obvious approach
+  and is wrong often enough to cost an afternoon — a 30 MB PSD can pack to 200 KB, and a 900 KB
+  PNG imported uncompressed can pack to 16 MB.
+
+  The unreferenced list is explicitly a guess and the window says so: Addressables, asset bundles
+  and `Resources.Load` with a runtime-built name are all invisible to it.
+
+### Changed
+
+- `ArsmiBuild.BuildWebGL` now opens the window; the build itself moved to
+  `ArsmiBuild.RunInteractiveBuild`. `BuildFromCommandLine` is untouched, so CI is unaffected.
+
+### Fixed
+
+- `package.json` said `4.3.0` throughout 4.4.0 — the release added the sample and the changelog
+  entry but never bumped the manifest, which is the only version Unity actually reads. Anyone who
+  updated to get the Pocket Console sample saw no version change and had no way to tell which
+  package they had. Corrected here rather than by re-tagging 4.4.0, since that version is already
+  pushed.
+
 ## [4.4.0] - 2026-07-26
 
 ### Added

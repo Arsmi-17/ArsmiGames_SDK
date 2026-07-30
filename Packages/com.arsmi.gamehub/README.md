@@ -68,8 +68,18 @@ the platform, or in the **SDK Assessment** page in admin.
 
 ## Building
 
-**Arsmi Games → Build WebGL…** (`Ctrl+Alt+B`). It asks **Portrait or Landscape**, then you
-pick a folder. Upload it. There is nothing to edit afterwards.
+**Arsmi Games → Build WebGL…** (`Ctrl+Alt+B`) opens a window with everything the build depends
+on: the scenes going into it, the settings the platform requires, and **Portrait or Landscape**.
+Press *Build WebGL…*, pick a folder, upload it. There is nothing to edit afterwards.
+
+The scene list is there because **which scene loads first cannot be fixed after the build**. It
+succeeds, uploads, and starts on the wrong screen with nothing anywhere saying why. The window
+marks that scene *loads first* and gives you one button to change it — note that this is not
+always the row Unity numbers `0`, because Unity numbers disabled rows too.
+
+Opening the window also turns **decompression fallback** on if it was off, and says so. That one
+is not a preference: the platform serves builds as static files with no `Content-Encoding`, so a
+compressed build without the fallback decompressor does not load at all.
 
 The orientation you pick is written into the build's `index.html`, and the canvas is locked to
 it: a portrait build stays portrait on a landscape screen, with black bars down the sides,
@@ -100,6 +110,29 @@ Unity.exe -quit -batchmode -projectPath . \
   -executeMethod ArsmiGames.EditorTools.ArsmiBuild.BuildFromCommandLine \
   -arsmiOutput Builds/WebGL -arsmiOrientation landscape
 ```
+
+## Where the build's size went
+
+**Arsmi Games → Build Size Report.** Four tabs, in the order the questions are worth asking:
+
+- **Last build** — what the build actually spent its bytes on, per asset and per category. Recorded
+  automatically at the end of every WebGL build, including one started from `File → Build Settings`.
+- **Heavy files** — the biggest files on disk. Useful before you have ever built, and for finding
+  source art that was never meant to ship.
+- **Unreferenced** — assets no enabled scene reaches, that are not in a `Resources` folder and not
+  preloaded. Review it; do not empty it blindly.
+- **Shrink** — the settings worth changing (strip engine code is usually the largest single saving),
+  and bulk texture/audio import settings applied to whatever you have selected in the Project window.
+
+**Last build is the one to trust.** Sorting a project by file size is the obvious move and it is
+wrong often enough to cost an afternoon: a 30 MB PSD can pack to 200 KB, while a 900 KB PNG imported
+uncompressed can pack to 16 MB. Only the build knows, and Unity throws that breakdown away when the
+build ends — which is why this records it at the moment it exists.
+
+The unreferenced list is a guess, and says so in the window. It cannot see Addressables, asset
+bundles, `Resources.Load` with a name built at runtime, or anything a native plugin opens, and it
+counts scenes you have not ticked in Build Settings as unused — correct for build size, wrong if you
+simply forgot to tick one. Deleting from it asks first and names the count.
 
 ## Test your integration before you upload
 
