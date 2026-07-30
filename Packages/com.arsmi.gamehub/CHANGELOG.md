@@ -5,6 +5,33 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0] - 2026-07-27
+
+### Added
+
+- **Move to Archive** in the Build Size Report's *Unreferenced* tab. Moves the listed assets to
+  `Archive/`, a sibling of `Assets`, keeping their folder structure —
+  `Assets/Graphics/Art/cat.png` becomes `Archive/Graphics/Art/cat.png`.
+
+  Out of `Assets` rather than into a folder inside it, which is the tempting version and achieves
+  almost nothing: an asset inside `Assets` is still imported on every project load and can still
+  ship. The `.meta` moves with the file, so the GUID survives and moving anything back restores
+  every reference to it — which is what makes this the safe button and Delete the last resort,
+  given the list is explicitly a guess. Nothing is ever overwritten; a repeated archive gets a
+  numbered suffix.
+
+- **Which scenes use an unreferenced asset**, named on the row. The scan roots at scenes ticked in
+  Build Settings, because that is what decides build size — so an asset used only by an unticked
+  scene appears here, correctly for size and misleadingly for "is this safe to remove". The summary
+  now counts orphans and used-elsewhere separately, warns when the second group is non-empty, and
+  *Select orphans* picks only the assets no scene references at all. Scene attribution is
+  cancellable; cancelling leaves the size verdict intact and only fills in fewer names.
+
+- **Quick-select in *Shrink***: all heavy assets, textures, audio or models above a size you choose.
+  Each button states its own count and total before you press it, and is disabled rather than
+  hidden at zero, so "are there any heavy textures?" is answered by the button itself. Ranked by
+  packed size when a build has been measured and by file size otherwise, and the tab says which.
+
 ## [4.5.0] - 2026-07-27
 
 ### Added

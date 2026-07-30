@@ -120,9 +120,14 @@ Unity.exe -quit -batchmode -projectPath . \
 - **Heavy files** — the biggest files on disk. Useful before you have ever built, and for finding
   source art that was never meant to ship.
 - **Unreferenced** — assets no enabled scene reaches, that are not in a `Resources` folder and not
-  preloaded. Review it; do not empty it blindly.
+  preloaded. Each row names **the scenes that do use it**, so you can tell a genuine orphan from
+  something a scene you have not ticked depends on. **Move to Archive** is the button to reach for:
+  it moves them to `Archive/`, outside `Assets`, keeping the folder structure — `Assets/Graphics/Art/cat.png`
+  becomes `Archive/Graphics/Art/cat.png`. The `.meta` moves too, so moving anything back restores
+  every reference to it. Delete is there as well and says plainly that it is the irreversible one.
 - **Shrink** — the settings worth changing (strip engine code is usually the largest single saving),
-  and bulk texture/audio import settings applied to whatever you have selected in the Project window.
+  quick-select buttons for heavy assets, textures, audio and models above a size you choose, and
+  bulk import settings applied to whatever is selected in the Project window.
 
 **Last build is the one to trust.** Sorting a project by file size is the obvious move and it is
 wrong often enough to cost an afternoon: a 30 MB PSD can pack to 200 KB, while a 900 KB PNG imported
@@ -130,9 +135,18 @@ uncompressed can pack to 16 MB. Only the build knows, and Unity throws that brea
 build ends — which is why this records it at the moment it exists.
 
 The unreferenced list is a guess, and says so in the window. It cannot see Addressables, asset
-bundles, `Resources.Load` with a name built at runtime, or anything a native plugin opens, and it
-counts scenes you have not ticked in Build Settings as unused — correct for build size, wrong if you
-simply forgot to tick one. Deleting from it asks first and names the count.
+bundles, `Resources.Load` with a name built at runtime, or anything a native plugin opens.
+
+What it **can** now tell you is which scenes use each one. The scan roots at the scenes ticked in
+Build Settings, because that is what decides build size — so an asset used only by an unticked scene
+lands in this list, correctly for size and misleadingly for "is this safe to remove". Every row
+therefore names the scenes that reference it, the summary counts the two groups separately, and
+*Select orphans* picks only the ones no scene uses at all.
+
+That is also why **Move to Archive** exists and is the recommended button. Archiving out of `Assets`
+stops an asset being imported and makes it impossible to ship, and because the `.meta` travels with
+the file, its GUID survives — put the pair back and every reference resolves again. Moving into a
+folder *inside* `Assets` is the tempting version and does almost none of that.
 
 ## Test your integration before you upload
 

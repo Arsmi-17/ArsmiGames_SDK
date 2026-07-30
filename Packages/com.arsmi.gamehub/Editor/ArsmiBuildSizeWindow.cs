@@ -31,9 +31,32 @@ namespace ArsmiGames.EditorTools
         private ArsmiBuildSizeData lastBuild;
 
         private List<ArsmiSizeEntry> heavy;
-        private List<string> unreferenced;
+
+        /// <summary>Every asset's size on disk. Shared by the Heavy tab and Shrink's quick-select.</summary>
+        private List<ArsmiSizeEntry> diskScan;
+
+        private List<Unreferenced> unreferenced;
         private bool includeScriptsInScan;
         private long unreferencedBytes;
+
+        /// <summary>Bytes above which the Shrink tab's quick-select calls an asset heavy.</summary>
+        private int heavyThresholdKb = 512;
+
+        /// <summary>
+        /// An asset the build does not reach, and the scenes — if any — that do.
+        /// </summary>
+        /// <remarks>
+        /// The scene list is the difference between "nothing uses this" and "a scene you have not
+        /// ticked uses this", and those two want opposite actions. Without it the tab reads as the
+        /// first and is sometimes the second, which is the one way a Move or Delete button here can
+        /// cost someone real work.
+        /// </remarks>
+        private sealed class Unreferenced
+        {
+            public string path;
+            public long bytes;
+            public List<string> usedByScenes = new List<string>();
+        }
 
         [MenuItem("Arsmi Games/Build Size Report", priority = 41)]
         public static void Open()
@@ -134,6 +157,22 @@ namespace ArsmiGames.EditorTools
 
         private void ScanHeavy()
         {
+            EnsureDiskScan();
+            heavy = diskScan.OrderByDescending(entry => entry.bytes).Take(60).ToList();
+        }
+
+        /// <summary>
+        /// Every asset with its size on disk, measured once and kept.
+        /// </summary>
+        /// <remarks>
+        /// Full, not the top 60 the Heavy tab shows: the Shrink tab selects everything over a
+        /// threshold, and a list truncated for display would silently cap what a Select button can
+        /// reach — the sort of limit that looks like the button not working.
+        /// </remarks>
+        private void EnsureDiskScan()
+        {
+            if (diskScan != null) return;
+
             var results = new List<ArsmiSizeEntry>();
             foreach (var path in AssetDatabase.GetAllAssetPaths())
             {
@@ -152,7 +191,46 @@ namespace ArsmiGames.EditorTools
                 }
             }
 
-            heavy = results.OrderByDescending(entry => entry.bytes).Take(60).ToList();
+            diskScan = results;
+        }
+
+        private static List<ArsmiSizeEntry> HeavierThan(List<ArsmiSizeEntry> source, long threshold, string category)
+        {
+            return source
+                .Where(entry => entry.bytes >= threshold)
+                .Where(entry => category == null || string.Equals(entry.category, category, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(entry => entry.bytes)
+                .ToList();
+        }
+
+        /// <summary>
+        /// A select button that states its own effect: how many, and how much.
+        /// </summary>
+        /// <remarks>
+        /// Disabled at zero rather than hidden, so the answer to "are there any heavy textures?" is
+        /// the button itself rather than a control that vanished.
+        /// </remarks>
+        private static void SelectButton(string label, List<ArsmiSizeEntry> entries)
+        {
+            var total = entries.Sum(entry => entry.bytes);
+            using (new EditorGUI.DisabledScope(entries.Count == 0))
+            {
+                if (GUILayout.Button($"{label} — {entries.Count}, {ArsmiBuildSizeRecord.Bytes(total)}"))
+                {
+                    Selection.objects = entries
+                        .Select(entry => AssetDatabase.LoadMainAssetAtPath(entry.path))
+                        .Where(asset => asset != null)
+                        .ToArray();
+                }
+            }
+        }
+
+        private static void Ping(string path)
+        {
+            var asset = AssetDatabase.LoadMainAssetAtPath(path);
+            if (asset == null) { Debug.LogWarning($"[Arsmi] {path} is no longer in the project."); return; }
+            Selection.activeObject = asset;
+            EditorGUIUtility.PingObject(asset);
         }
 
         // --- 3. unreferenced ----------------------------------------------------------------
@@ -178,35 +256,73 @@ namespace ArsmiGames.EditorTools
 
             if (unreferenced == null) return;
 
+            var orphans = unreferenced.Count(entry => entry.usedByScenes.Count == 0);
+            var usedElsewhere = unreferenced.Count - orphans;
+
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField(
                 $"{unreferenced.Count} unreferenced  ·  {ArsmiBuildSizeRecord.Bytes(unreferencedBytes)} on disk",
                 EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                $"{orphans} used by no scene at all  ·  {usedElsewhere} used only by scenes that are not in the build",
+                EditorStyles.miniLabel);
+
+            if (usedElsewhere > 0)
+            {
+                EditorGUILayout.HelpBox(
+                    $"{usedElsewhere} of these are used by a scene in the project that is not ticked in Build " +
+                    "Settings. They are dead weight in the build and live assets in the Editor — check the scene " +
+                    "named beside each one before moving or deleting it.",
+                    MessageType.Warning);
+            }
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Select all in Project", GUILayout.Width(160f)))
+                if (GUILayout.Button("Select all", GUILayout.Width(80f))) SelectUnreferenced(all: true);
+                if (GUILayout.Button(new GUIContent("Select orphans", "Only the ones no scene uses"), GUILayout.Width(110f)))
                 {
-                    Selection.objects = unreferenced
-                        .Select(AssetDatabase.LoadMainAssetAtPath)
-                        .Where(asset => asset != null)
-                        .ToArray();
+                    SelectUnreferenced(all: false);
                 }
-
+                GUILayout.FlexibleSpace();
+                if (GUILayout.Button(new GUIContent("Move to Archive…", "Move out of Assets, keeping the folder structure"), GUILayout.Width(130f)))
+                {
+                    ArchiveUnreferenced();
+                }
                 if (GUILayout.Button("Delete all…", GUILayout.Width(90f))) DeleteUnreferenced();
             }
 
-            foreach (var path in unreferenced.Take(200))
+            foreach (var entry in unreferenced.Take(200))
             {
-                long size = 0;
-                try { size = new FileInfo(path).Length; } catch { /* reported as 0 */ }
-                DrawAssetRow(path, size);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField(ArsmiBuildSizeRecord.Bytes(entry.bytes), GUILayout.Width(70f));
+                    EditorGUILayout.LabelField(new GUIContent(Path.GetFileName(entry.path), entry.path), GUILayout.MinWidth(110f));
+
+                    // The scene, where there is one. This is the column that decides whether a row is
+                    // safe to act on, so it sits beside the name rather than in a tooltip.
+                    var scenes = entry.usedByScenes.Count == 0
+                        ? "no scene"
+                        : string.Join(", ", entry.usedByScenes.Take(3)) + (entry.usedByScenes.Count > 3 ? $" +{entry.usedByScenes.Count - 3}" : "");
+                    var style = entry.usedByScenes.Count == 0 ? EditorStyles.miniLabel : EditorStyles.whiteMiniLabel;
+                    EditorGUILayout.LabelField(new GUIContent(scenes, string.Join("\n", entry.usedByScenes)), style, GUILayout.Width(190f));
+
+                    if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(52f))) Ping(entry.path);
+                }
             }
 
             if (unreferenced.Count > 200)
             {
                 EditorGUILayout.LabelField($"…and {unreferenced.Count - 200} more. Select all to see them in the Project window.", EditorStyles.miniLabel);
             }
+        }
+
+        private void SelectUnreferenced(bool all)
+        {
+            Selection.objects = unreferenced
+                .Where(entry => all || entry.usedByScenes.Count == 0)
+                .Select(entry => AssetDatabase.LoadMainAssetAtPath(entry.path))
+                .Where(asset => asset != null)
+                .ToArray();
         }
 
         private void ScanUnreferenced()
@@ -233,7 +349,7 @@ namespace ArsmiGames.EditorTools
             var used = new HashSet<string>(AssetDatabase.GetDependencies(roots.Distinct().ToArray(), recursive: true),
                 StringComparer.OrdinalIgnoreCase);
 
-            var results = new List<string>();
+            var results = new List<Unreferenced>();
             long total = 0;
             foreach (var path in all)
             {
@@ -242,12 +358,79 @@ namespace ArsmiGames.EditorTools
                 if (IsEditorOnly(path)) continue;
                 if (!includeScriptsInScan && IsCode(path)) continue;
 
-                results.Add(path);
-                try { total += new FileInfo(path).Length; } catch { /* counted as 0 */ }
+                var entry = new Unreferenced { path = path };
+                try { entry.bytes = new FileInfo(path).Length; } catch { /* counted as 0 */ }
+                total += entry.bytes;
+                results.Add(entry);
             }
 
-            unreferenced = results.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList();
+            AttributeToScenes(results);
+
+            unreferenced = results.OrderBy(entry => entry.path, StringComparer.OrdinalIgnoreCase).ToList();
             unreferencedBytes = total;
+        }
+
+        /// <summary>
+        /// For each unreferenced asset, which scenes in the PROJECT use it — not just the ones in
+        /// the build.
+        /// </summary>
+        /// <remarks>
+        /// The roots of the scan above are deliberately the enabled build scenes, because that is
+        /// what decides build size. But it means a scene you have merely not ticked contributes
+        /// nothing, and every asset only it uses is reported as unreferenced. That reading is
+        /// correct for size and wrong for "is this safe to remove", and the two are one button
+        /// apart in this tab.
+        ///
+        /// Walked per scene rather than in one GetDependencies call because the answer needed is
+        /// which scene, not whether any.
+        /// </remarks>
+        private static void AttributeToScenes(List<Unreferenced> candidates)
+        {
+            if (candidates.Count == 0) return;
+
+            var byPath = candidates.ToDictionary(entry => entry.path, StringComparer.OrdinalIgnoreCase);
+            var inBuild = new HashSet<string>(
+                EditorBuildSettings.scenes.Where(scene => scene.enabled).Select(scene => scene.path),
+                StringComparer.OrdinalIgnoreCase);
+
+            var scenes = AssetDatabase.FindAssets("t:Scene")
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .Where(path => path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                // A scene already in the build cannot be the explanation: everything it touches was
+                // in the used set, so nothing it uses reached this list.
+                .Where(path => !inBuild.Contains(path))
+                .Distinct()
+                .ToArray();
+
+            try
+            {
+                for (var i = 0; i < scenes.Length; i++)
+                {
+                    if (EditorUtility.DisplayCancelableProgressBar(
+                            "Arsmi — scanning scenes",
+                            Path.GetFileNameWithoutExtension(scenes[i]),
+                            (i + 1) / (float)scenes.Length))
+                    {
+                        // Cancelled: the list is still correct about what the build does not reach,
+                        // it just has fewer scene names filled in. Partial attribution is better
+                        // than none, and the count shown makes the gap visible.
+                        break;
+                    }
+
+                    var name = Path.GetFileNameWithoutExtension(scenes[i]);
+                    foreach (var dependency in AssetDatabase.GetDependencies(scenes[i], recursive: true))
+                    {
+                        if (byPath.TryGetValue(dependency, out var entry) && !entry.usedByScenes.Contains(name))
+                        {
+                            entry.usedByScenes.Add(name);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
         }
 
         private static bool IsUnderResources(string path) =>
@@ -272,6 +455,95 @@ namespace ArsmiGames.EditorTools
             path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase) ||
             path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>Where archived assets go: a sibling of Assets, not a folder inside it.</summary>
+        private static string ArchiveRoot =>
+            Path.Combine(Directory.GetParent(Application.dataPath)?.FullName ?? ".", "Archive");
+
+        /// <summary>
+        /// Move the list out of Assets, keeping the folder structure.
+        ///
+        /// Assets/Graphics/Art/cat.png becomes Archive/Graphics/Art/cat.png, so what comes back is
+        /// recognisable and can be put back by hand if this window is ever gone.
+        ///
+        /// Out of Assets rather than into Assets/Archive, which is the tempting version and does
+        /// almost nothing: inside Assets an asset is still imported on every project load, still
+        /// costs Library space, and still ships if anything reaches it — a Resources folder moved
+        /// wholesale would go right on shipping from its new home.
+        ///
+        /// The .meta moves with the file, and that is the point. The GUID lives in the .meta, so a
+        /// reference is not broken by the move, only unresolvable while the file is away — put the
+        /// pair back and every reference resolves again. That is what makes this the safe button
+        /// and Delete the last resort, given the list is explicitly a guess.
+        /// </summary>
+        private void ArchiveUnreferenced()
+        {
+            if (unreferenced == null || unreferenced.Count == 0) return;
+
+            var usedElsewhere = unreferenced.Count(entry => entry.usedByScenes.Count > 0);
+            var warning = usedElsewhere > 0
+                ? $"\n\n{usedElsewhere} of them are used by a scene that is not in the build. Those scenes will " +
+                  "show missing references until you move the files back."
+                : "";
+
+            var confirmed = EditorUtility.DisplayDialog(
+                "Move to Archive",
+                $"Move {unreferenced.Count} files ({ArsmiBuildSizeRecord.Bytes(unreferencedBytes)}) out of Assets?\n\n" +
+                $"They go to {ArchiveRoot}, keeping their folder structure, with their .meta files. " +
+                "Because the .meta travels too, moving anything back restores every reference to it." + warning,
+                "Move", "Cancel");
+
+            if (!confirmed) return;
+
+            var moved = 0;
+            var failed = new List<string>();
+
+            foreach (var entry in unreferenced)
+            {
+                try
+                {
+                    // Relative to Assets, so Assets/A/B.png lands at Archive/A/B.png.
+                    var relative = entry.path.Substring("Assets/".Length);
+                    var destination = UniquePath(Path.Combine(ArchiveRoot, relative.Replace('/', Path.DirectorySeparatorChar)));
+                    Directory.CreateDirectory(Path.GetDirectoryName(destination) ?? ArchiveRoot);
+
+                    File.Move(entry.path, destination);
+                    // Same uniquified stem, or Unity would pair the .meta with nothing on the way back.
+                    if (File.Exists(entry.path + ".meta")) File.Move(entry.path + ".meta", destination + ".meta");
+                    moved++;
+                }
+                catch (Exception error)
+                {
+                    failed.Add($"{entry.path} — {error.Message}");
+                }
+            }
+
+            AssetDatabase.Refresh();
+
+            Debug.Log($"[Arsmi] Moved {moved} asset(s) to {ArchiveRoot}. Empty folders are left in Assets on " +
+                      "purpose — deleting a folder is not something a size report should decide.");
+            foreach (var failure in failed) Debug.LogWarning($"[Arsmi] Could not archive {failure}");
+
+            unreferenced = null;
+            unreferencedBytes = 0;
+        }
+
+        /// <summary>Never overwrite. A second archive run must not silently replace the first.</summary>
+        private static string UniquePath(string path)
+        {
+            if (!File.Exists(path)) return path;
+
+            var directory = Path.GetDirectoryName(path) ?? "";
+            var stem = Path.GetFileNameWithoutExtension(path);
+            var extension = Path.GetExtension(path);
+            for (var i = 2; i < 1000; i++)
+            {
+                var candidate = Path.Combine(directory, $"{stem} ({i}){extension}");
+                if (!File.Exists(candidate)) return candidate;
+            }
+
+            return Path.Combine(directory, $"{stem} ({Guid.NewGuid():N}){extension}");
+        }
+
         private void DeleteUnreferenced()
         {
             if (unreferenced == null || unreferenced.Count == 0) return;
@@ -283,7 +555,8 @@ namespace ArsmiGames.EditorTools
                 $"Permanently delete {unreferenced.Count} files ({ArsmiBuildSizeRecord.Bytes(unreferencedBytes)})?\n\n" +
                 "This list is a guess. It cannot see Addressables, asset bundles, or Resources.Load with a " +
                 "name built at runtime, and it treats scenes you have not ticked in Build Settings as unused.\n\n" +
-                "If this project is not committed to version control, there is no way back.",
+                "Move to Archive does the same job reversibly. If this project is not in version control, " +
+                "there is no way back from this one.",
                 "Delete", "Cancel");
 
             if (!confirmed) return;
@@ -292,9 +565,9 @@ namespace ArsmiGames.EditorTools
             AssetDatabase.StartAssetEditing();
             try
             {
-                foreach (var path in unreferenced)
+                foreach (var entry in unreferenced)
                 {
-                    if (!AssetDatabase.DeleteAsset(path)) failed.Add(path);
+                    if (!AssetDatabase.DeleteAsset(entry.path)) failed.Add(entry.path);
                 }
             }
             finally
@@ -336,6 +609,42 @@ namespace ArsmiGames.EditorTools
                 "fastest, but a crash in the wild then gives you no stack trace at all — a deliberate trade, " +
                 "so this window will not make it for you.",
                 EditorStyles.wordWrappedMiniLabel);
+
+            EditorGUILayout.Space(10f);
+            EditorGUILayout.LabelField("Find the heavy ones", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(
+                "Selects them in the Project window, which is what the actions below act on.",
+                EditorStyles.wordWrappedMiniLabel);
+
+            // Packed size when a build has been measured, file size otherwise — and it says which,
+            // because the two disagree often enough that a number with no provenance is a trap.
+            var measured = lastBuild != null && lastBuild.biggest.Count > 0;
+            var source = measured ? lastBuild.biggest : diskScan;
+
+            if (source == null)
+            {
+                EditorGUILayout.HelpBox(
+                    "No build measured and no file scan yet, so there is nothing to rank.",
+                    MessageType.Info);
+                // Explicit, not on first paint: this walks every asset path, and a tab that stalls
+                // the Editor the moment you click it reads as a hang.
+                if (GUILayout.Button("Scan project files", GUILayout.Width(140f))) EnsureDiskScan();
+                return;
+            }
+
+            EditorGUILayout.LabelField(
+                measured ? "Ranked by packed size from the last build." : "Ranked by file size on disk.",
+                EditorStyles.miniLabel);
+
+            heavyThresholdKb = EditorGUILayout.IntSlider("Heavier than (KB)", heavyThresholdKb, 64, 8192);
+
+            // Counted before the buttons are drawn so each can say what it will select. A button that
+            // turns out to select nothing is indistinguishable from a button that is broken.
+            var threshold = heavyThresholdKb * 1024L;
+            SelectButton("All heavy assets", HeavierThan(source, threshold, null));
+            SelectButton("Heavy textures", HeavierThan(source, threshold, "Textures"));
+            SelectButton("Heavy audio", HeavierThan(source, threshold, "Audio"));
+            SelectButton("Heavy models", HeavierThan(source, threshold, "Models"));
 
             EditorGUILayout.Space(10f);
             EditorGUILayout.LabelField("Bulk import settings", EditorStyles.boldLabel);
@@ -426,21 +735,9 @@ namespace ArsmiGames.EditorTools
             {
                 EditorGUILayout.LabelField(ArsmiBuildSizeRecord.Bytes(bytes), GUILayout.Width(70f));
                 EditorGUILayout.LabelField(new GUIContent(Path.GetFileName(path), path), GUILayout.MinWidth(120f));
-                if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(52f)))
-                {
-                    var asset = AssetDatabase.LoadMainAssetAtPath(path);
-                    if (asset != null)
-                    {
-                        Selection.activeObject = asset;
-                        EditorGUIUtility.PingObject(asset);
-                    }
-                    else
-                    {
-                        // Recorded by a build, deleted since. Saying so beats a button that
-                        // silently does nothing.
-                        Debug.LogWarning($"[Arsmi] {path} is no longer in the project.");
-                    }
-                }
+                // Recorded by a build and deleted since is a real case, so Ping says so rather than
+                // leaving a button that silently does nothing.
+                if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(52f))) Ping(path);
             }
         }
     }
