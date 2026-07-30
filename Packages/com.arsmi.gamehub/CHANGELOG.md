@@ -5,7 +5,7 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.6.0] - 2026-07-27
+## [4.5.0] - 2026-07-27
 
 ### Added
 
@@ -31,10 +31,6 @@ package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Each button states its own count and total before you press it, and is disabled rather than
   hidden at zero, so "are there any heavy textures?" is answered by the button itself. Ranked by
   packed size when a build has been measured and by file size otherwise, and the tab says which.
-
-## [4.5.0] - 2026-07-27
-
-### Added
 
 - **A build window** in front of *Arsmi Games ▸ Build WebGL…*, replacing the modal that asked one
   question. It shows the scenes going into the build, marks which one **loads first**, and gives
