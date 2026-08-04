@@ -43,19 +43,44 @@ namespace ArsmiGames.EditorTools
         private int heavyThresholdKb = 512;
 
         /// <summary>
-        /// An asset the build does not reach, and the scenes — if any — that do.
+        /// An asset the build does not reach, and whatever still points at it.
         /// </summary>
         /// <remarks>
-        /// The scene list is the difference between "nothing uses this" and "a scene you have not
-        /// ticked uses this", and those two want opposite actions. Without it the tab reads as the
-        /// first and is sometimes the second, which is the one way a Move or Delete button here can
-        /// cost someone real work.
+        /// The two lists are the difference between "nothing uses this" and "something you can name
+        /// uses this", and those two want opposite actions. Without them the tab reads as the first
+        /// and is sometimes the second, which is the one way a Move or Delete button here can cost
+        /// someone real work — a material assigned to a prefab, or a shader a scene you have not
+        /// ticked still draws with, is not spare.
+        ///
+        /// Anything with an entry in either list is held back from Move and Delete. See
+        /// <see cref="IsHeld"/>.
         /// </remarks>
         private sealed class Unreferenced
         {
             public string path;
             public long bytes;
             public List<string> usedByScenes = new List<string>();
+
+            /// <summary>Assets that still reference this one — a prefab, a material, a settings asset.</summary>
+            public List<string> referencedBy = new List<string>();
+
+            /// <summary>
+            /// Still pointed at by something, so listed as build weight but never moved or deleted.
+            /// </summary>
+            /// <remarks>
+            /// Held even when the thing pointing at it is itself on this list — a dead prefab and
+            /// its dead material both being weight does not make it safe to take the material out
+            /// from under the prefab in the same click. Archive the prefab, scan again, and the
+            /// material comes back with nothing pointing at it and moves on the second pass. Two
+            /// passes to clear a chain is the price of never breaking a live reference.
+            /// </remarks>
+            public bool IsHeld => usedByScenes.Count > 0 || referencedBy.Count > 0;
+
+            /// <summary>The one thing to show in the row: why this is not moving.</summary>
+            public string HeldBy =>
+                usedByScenes.Count > 0 ? "scene: " + usedByScenes[0]
+                : referencedBy.Count > 0 ? Path.GetFileName(referencedBy[0])
+                : "nothing";
         }
 
         [MenuItem("Arsmi Games/Build Size Report", priority = 41)]
@@ -238,12 +263,14 @@ namespace ArsmiGames.EditorTools
         private void DrawUnreferenced()
         {
             EditorGUILayout.HelpBox(
-                "Assets that nothing in the build reaches: not used by a scene ticked in Build Settings, not " +
-                "in a Resources folder, and not a preloaded asset.\n\n" +
-                "Read this as a list to review, never as a list to delete blindly. It cannot see " +
-                "Resources.Load called with a name built at runtime, Addressables, asset bundles, or anything " +
-                "a native plugin opens. Scenes you have not ticked count as unreferenced, which is correct for " +
-                "build size and wrong if you simply forgot to tick one.",
+                "Assets that nothing in the build reaches: not used by a scene ticked in Build Settings, not in " +
+                "a Resources folder, not preloaded, not named by Project Settings, not in an asset bundle or " +
+                "the Addressables catalogue, and not included by a shader that ships.\n\n" +
+                "Read this as a list to review, never as a list to delete blindly. It still cannot see " +
+                "Resources.Load called with a name built at runtime, a Shader.Find by name, or anything a " +
+                "native plugin opens.\n\n" +
+                "Move and Delete only ever touch rows nothing points at. Anything still assigned to a scene, a " +
+                "prefab, a material or a settings asset is listed as build weight and left where it is.",
                 MessageType.Warning);
 
             includeScriptsInScan = EditorGUILayout.ToggleLeft(
@@ -256,39 +283,48 @@ namespace ArsmiGames.EditorTools
 
             if (unreferenced == null) return;
 
-            var orphans = unreferenced.Count(entry => entry.usedByScenes.Count == 0);
-            var usedElsewhere = unreferenced.Count - orphans;
+            var movable = Movable().ToList();
+            var held = unreferenced.Count - movable.Count;
+            var movableBytes = movable.Sum(entry => entry.bytes);
 
             EditorGUILayout.Space(4f);
             EditorGUILayout.LabelField(
                 $"{unreferenced.Count} unreferenced  ·  {ArsmiBuildSizeRecord.Bytes(unreferencedBytes)} on disk",
                 EditorStyles.boldLabel);
             EditorGUILayout.LabelField(
-                $"{orphans} used by no scene at all  ·  {usedElsewhere} used only by scenes that are not in the build",
+                $"{movable.Count} nothing points at ({ArsmiBuildSizeRecord.Bytes(movableBytes)})  ·  {held} held back",
                 EditorStyles.miniLabel);
 
-            if (usedElsewhere > 0)
+            if (held > 0)
             {
                 EditorGUILayout.HelpBox(
-                    $"{usedElsewhere} of these are used by a scene in the project that is not ticked in Build " +
-                    "Settings. They are dead weight in the build and live assets in the Editor — check the scene " +
-                    "named beside each one before moving or deleting it.",
-                    MessageType.Warning);
+                    $"{held} of these are still assigned to something — a scene that is not ticked in Build " +
+                    "Settings, a prefab, a material, a settings asset. They are weight in the build and live " +
+                    "references in the Editor, so they are listed and never moved or deleted. The row names what " +
+                    "holds each one.\n\n" +
+                    "Archive what holds them, scan again, and they become movable.",
+                    MessageType.Info);
             }
 
             using (new EditorGUILayout.HorizontalScope())
             {
                 if (GUILayout.Button("Select all", GUILayout.Width(80f))) SelectUnreferenced(all: true);
-                if (GUILayout.Button(new GUIContent("Select orphans", "Only the ones no scene uses"), GUILayout.Width(110f)))
+                if (GUILayout.Button(new GUIContent("Select movable", "Only the ones nothing points at"), GUILayout.Width(110f)))
                 {
                     SelectUnreferenced(all: false);
                 }
                 GUILayout.FlexibleSpace();
-                if (GUILayout.Button(new GUIContent("Move to Archive…", "Move out of Assets, keeping the folder structure"), GUILayout.Width(130f)))
+
+                using (new EditorGUI.DisabledScope(movable.Count == 0))
                 {
-                    ArchiveUnreferenced();
+                    if (GUILayout.Button(
+                            new GUIContent($"Move {movable.Count} to Archive…", "Move out of Assets, keeping the folder structure"),
+                            GUILayout.Width(150f)))
+                    {
+                        ArchiveUnreferenced();
+                    }
+                    if (GUILayout.Button($"Delete {movable.Count}…", GUILayout.Width(90f))) DeleteUnreferenced();
                 }
-                if (GUILayout.Button("Delete all…", GUILayout.Width(90f))) DeleteUnreferenced();
             }
 
             foreach (var entry in unreferenced.Take(200))
@@ -298,13 +334,17 @@ namespace ArsmiGames.EditorTools
                     EditorGUILayout.LabelField(ArsmiBuildSizeRecord.Bytes(entry.bytes), GUILayout.Width(70f));
                     EditorGUILayout.LabelField(new GUIContent(Path.GetFileName(entry.path), entry.path), GUILayout.MinWidth(110f));
 
-                    // The scene, where there is one. This is the column that decides whether a row is
-                    // safe to act on, so it sits beside the name rather than in a tooltip.
-                    var scenes = entry.usedByScenes.Count == 0
-                        ? "no scene"
-                        : string.Join(", ", entry.usedByScenes.Take(3)) + (entry.usedByScenes.Count > 3 ? $" +{entry.usedByScenes.Count - 3}" : "");
-                    var style = entry.usedByScenes.Count == 0 ? EditorStyles.miniLabel : EditorStyles.whiteMiniLabel;
-                    EditorGUILayout.LabelField(new GUIContent(scenes, string.Join("\n", entry.usedByScenes)), style, GUILayout.Width(190f));
+                    // What holds the row, where something does. This is the column that decides
+                    // whether a row is acted on, so it sits beside the name rather than in a tooltip.
+                    var others = entry.usedByScenes.Count + entry.referencedBy.Count - 1;
+                    var reason = entry.IsHeld
+                        ? entry.HeldBy + (others > 0 ? $" +{others}" : "")
+                        : "nothing points at it";
+                    var tooltip = entry.IsHeld
+                        ? string.Join("\n", entry.usedByScenes.Select(scene => "scene: " + scene).Concat(entry.referencedBy))
+                        : "Nothing in the project references this. Move and Delete will take it.";
+                    var style = entry.IsHeld ? EditorStyles.whiteMiniLabel : EditorStyles.miniLabel;
+                    EditorGUILayout.LabelField(new GUIContent(reason, tooltip), style, GUILayout.Width(190f));
 
                     if (GUILayout.Button("Select", EditorStyles.miniButton, GUILayout.Width(52f))) Ping(entry.path);
                 }
@@ -318,8 +358,7 @@ namespace ArsmiGames.EditorTools
 
         private void SelectUnreferenced(bool all)
         {
-            Selection.objects = unreferenced
-                .Where(entry => all || entry.usedByScenes.Count == 0)
+            Selection.objects = (all ? unreferenced : Movable().ToList())
                 .Select(entry => AssetDatabase.LoadMainAssetAtPath(entry.path))
                 .Where(asset => asset != null)
                 .ToArray();
@@ -346,8 +385,16 @@ namespace ArsmiGames.EditorTools
                 if (!string.IsNullOrEmpty(path)) roots.Add(path);
             }
 
+            roots.AddRange(ProjectSettingsRoots());
+            roots.AddRange(AssetBundleRoots());
+            // The Addressables catalogue names every addressable asset by GUID, so making the
+            // catalogue a root makes the whole addressable tree reachable.
+            roots.AddRange(all.Where(path => path.StartsWith("Assets/AddressableAssetsData/", StringComparison.OrdinalIgnoreCase)));
+
             var used = new HashSet<string>(AssetDatabase.GetDependencies(roots.Distinct().ToArray(), recursive: true),
                 StringComparer.OrdinalIgnoreCase);
+
+            AddShaderSources(used, all);
 
             var results = new List<Unreferenced>();
             long total = 0;
@@ -365,10 +412,184 @@ namespace ArsmiGames.EditorTools
             }
 
             AttributeToScenes(results);
+            AttributeToAssets(results, all);
 
             unreferenced = results.OrderBy(entry => entry.path, StringComparer.OrdinalIgnoreCase).ToList();
             unreferencedBytes = total;
         }
+
+        /// <summary>
+        /// Assets referenced by Project Settings rather than by anything in Assets.
+        /// </summary>
+        /// <remarks>
+        /// This is the gap that makes the tab dangerous without it. A URP project keeps its render
+        /// pipeline asset, its renderer, its global settings and its default volume profile in
+        /// Assets, and the only thing pointing at them is Graphics Settings — no scene does, so a
+        /// scan rooted at scenes calls every one of them unreferenced and offers to move the files
+        /// the project cannot render a single frame without. Always-included shaders, preloaded
+        /// shader variant collections, the per-quality-level pipeline overrides and the splash
+        /// screen logo are all in the same position.
+        ///
+        /// Walked generically rather than field by field on purpose: every one of those is just an
+        /// object reference on a settings object, so iterating the serialised properties catches
+        /// the ones a hand-written list would miss and keeps catching them when Unity adds more.
+        /// </remarks>
+        private static IEnumerable<string> ProjectSettingsRoots()
+        {
+            var settings = new List<UnityEngine.Object>();
+
+            // Qualified rather than a using, which would drop the whole of UnityEngine.Rendering
+            // into a file that already has UnityEngine and UnityEditor in scope.
+            try { settings.Add(UnityEngine.Rendering.GraphicsSettings.GetGraphicsSettings()); }
+            catch { /* no graphics settings */ }
+            try { settings.Add(QualitySettings.GetQualitySettings()); } catch { /* no quality settings */ }
+            // Player Settings has no accessor of its own; it is a settings asset like the others.
+            try { settings.AddRange(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset")); }
+            catch { /* not loadable on this Unity version */ }
+
+            var paths = new List<string>();
+            foreach (var asset in settings)
+            {
+                if (asset == null) continue;
+
+                try
+                {
+                    var serialized = new SerializedObject(asset);
+                    var property = serialized.GetIterator();
+                    while (property.Next(enterChildren: true))
+                    {
+                        if (property.propertyType != SerializedPropertyType.ObjectReference) continue;
+
+                        var value = property.objectReferenceValue;
+                        if (value == null) continue;
+
+                        var path = AssetDatabase.GetAssetPath(value);
+                        if (!string.IsNullOrEmpty(path) && path.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                        {
+                            paths.Add(path);
+                        }
+                    }
+                }
+                catch (Exception error)
+                {
+                    Debug.LogWarning($"[Arsmi] Could not read {asset.name} for references — assets it points at may be " +
+                                     $"listed as unreferenced. {error.Message}");
+                }
+            }
+
+            return paths;
+        }
+
+        /// <summary>
+        /// Anything with an AssetBundle name ships in that bundle whether or not a scene wants it.
+        /// </summary>
+        private static IEnumerable<string> AssetBundleRoots() =>
+            AssetDatabase.GetAllAssetBundleNames().SelectMany(AssetDatabase.GetAssetPathsFromAssetBundle);
+
+        /// <summary>
+        /// Follow the references shaders make in text, which the asset database does not model.
+        /// </summary>
+        /// <remarks>
+        /// <c>#include "TMPro_Properties.cginc"</c> is a filename in a string, not a GUID, so
+        /// <c>GetDependencies</c> on a live shader does not report the include and the include is
+        /// reported unreferenced. Move it and the shader stops compiling — the project's text turns
+        /// magenta and the cause is a file that is no longer in Assets. Shader Graph has the same
+        /// problem from the other end: a Custom Function node stores its HLSL file as a bare GUID
+        /// string inside the graph's JSON, which is likewise not a dependency.
+        ///
+        /// Both are resolved here against files already known to ship, then repeated until nothing
+        /// new turns up, because an include may include another one.
+        /// </remarks>
+        private static void AddShaderSources(HashSet<string> used, string[] all)
+        {
+            var byName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in all.Where(IsShaderSource))
+            {
+                var name = Path.GetFileName(path);
+                if (!byName.TryGetValue(name, out var matches)) byName[name] = matches = new List<string>();
+                matches.Add(path);
+            }
+
+            var pending = new Queue<string>(used.Where(IsShaderSource));
+            while (pending.Count > 0)
+            {
+                var path = pending.Dequeue();
+
+                string text;
+                try { text = File.ReadAllText(path); }
+                catch { continue; }
+
+                foreach (var found in ReferencedShaderSources(path, text, byName))
+                {
+                    if (!used.Add(found)) continue;
+                    if (IsShaderSource(found)) pending.Enqueue(found);
+                }
+            }
+        }
+
+        /// <summary>Every shader source one shader source names, by path, by filename, or by GUID.</summary>
+        private static IEnumerable<string> ReferencedShaderSources(
+            string path, string text, Dictionary<string, List<string>> byName)
+        {
+            var folder = Path.GetDirectoryName(path)?.Replace('\\', '/') ?? "Assets";
+
+            // Any quoted filename with a shader source extension. Covers #include and
+            // #include_with_pragmas without having to model either.
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\"([^\"\r\n]+\\.(?:cginc|hlsl|hlslinc|glslinc|shader|compute))\""))
+            {
+                var quoted = match.Groups[1].Value.Replace('\\', '/');
+
+                // Relative to the including file first, which is what the compiler does.
+                var relative = NormalisePath(folder + "/" + quoted);
+                if (!string.IsNullOrEmpty(relative) && File.Exists(relative)) { yield return relative; continue; }
+
+                // Then by name anywhere in the project. Two files with one name means both are
+                // kept: over-keeping costs a few kilobytes, under-keeping costs a broken shader.
+                if (byName.TryGetValue(Path.GetFileName(quoted), out var matches))
+                {
+                    foreach (var candidate in matches) yield return candidate;
+                }
+            }
+
+            // Shader Graph's Custom Function nodes, which store the HLSL file as a bare GUID.
+            if (!path.EndsWith(".shadergraph", StringComparison.OrdinalIgnoreCase) &&
+                !path.EndsWith(".shadersubgraph", StringComparison.OrdinalIgnoreCase))
+            {
+                yield break;
+            }
+
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\\b[0-9a-f]{32}\\b"))
+            {
+                var found = AssetDatabase.GUIDToAssetPath(match.Value);
+                if (!string.IsNullOrEmpty(found) && File.Exists(found)) yield return found;
+            }
+        }
+
+        /// <summary>Collapse "A/B/../C" to "A/C" so a relative include resolves to a real file.</summary>
+        private static string NormalisePath(string path)
+        {
+            var parts = new List<string>();
+            foreach (var part in path.Split('/'))
+            {
+                if (part == "." || part.Length == 0) continue;
+                if (part == ".." && parts.Count > 0) { parts.RemoveAt(parts.Count - 1); continue; }
+                parts.Add(part);
+            }
+
+            return string.Join("/", parts);
+        }
+
+        private static bool IsShaderSource(string path) =>
+            path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".cginc", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".hlsl", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".hlslinc", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".glslinc", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".compute", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".shadergraph", StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(".shadersubgraph", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
         /// For each unreferenced asset, which scenes in the PROJECT use it — not just the ones in
@@ -433,6 +654,72 @@ namespace ArsmiGames.EditorTools
             }
         }
 
+        /// <summary>
+        /// For each candidate, what in the project still points at it.
+        /// </summary>
+        /// <remarks>
+        /// The scene pass above answers "does a scene draw this". This one answers the wider
+        /// question the Move button actually needs: does <em>anything</em> — a prefab, a material,
+        /// an animator, a ScriptableObject an Editor tool owns — still have this assigned. A
+        /// material on a prefab that no scene has yet, a shader on that material, a VFX asset on a
+        /// component: all of them are assigned work, and none of them can be told apart from
+        /// genuine litter by the build's reachability alone.
+        ///
+        /// Direct dependencies only, per asset, because what is wanted is the name of the thing
+        /// holding the reference — the recursive answer would name the far end of a chain rather
+        /// than the link.
+        /// </remarks>
+        private static void AttributeToAssets(List<Unreferenced> candidates, string[] all)
+        {
+            if (candidates.Count == 0) return;
+
+            var byPath = candidates.ToDictionary(entry => entry.path, StringComparer.OrdinalIgnoreCase);
+
+            try
+            {
+                for (var i = 0; i < all.Length; i++)
+                {
+                    if (i % 64 == 0 && EditorUtility.DisplayCancelableProgressBar(
+                            "Arsmi — checking what still points at these",
+                            Path.GetFileName(all[i]),
+                            (i + 1) / (float)all.Length))
+                    {
+                        // Cancelled mid-pass, so some referrers are unknown — and an unknown
+                        // referrer is exactly what this pass exists to stop. Hold everything.
+                        foreach (var entry in candidates)
+                        {
+                            if (!entry.referencedBy.Contains(Cancelled)) entry.referencedBy.Add(Cancelled);
+                        }
+
+                        break;
+                    }
+
+                    // An asset trivially depends on itself; that is not a referrer.
+                    foreach (var dependency in AssetDatabase.GetDependencies(all[i], recursive: false))
+                    {
+                        if (string.Equals(dependency, all[i], StringComparison.OrdinalIgnoreCase)) continue;
+                        if (byPath.TryGetValue(dependency, out var entry) && !entry.referencedBy.Contains(all[i]))
+                        {
+                            entry.referencedBy.Add(all[i]);
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+        }
+
+        /// <summary>Stand-in referrer for a cancelled reference pass: unknown, so treated as held.</summary>
+        private const string Cancelled = "(reference check cancelled)";
+
+        /// <summary>
+        /// What Move and Delete are allowed to touch: the entries nothing at all points at.
+        /// </summary>
+        private IEnumerable<Unreferenced> Movable() =>
+            unreferenced == null ? Enumerable.Empty<Unreferenced>() : unreferenced.Where(entry => !entry.IsHeld);
+
         private static bool IsUnderResources(string path) =>
             path.IndexOf("/Resources/", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -477,19 +764,22 @@ namespace ArsmiGames.EditorTools
         /// </summary>
         private void ArchiveUnreferenced()
         {
-            if (unreferenced == null || unreferenced.Count == 0) return;
+            if (unreferenced == null) return;
 
-            var usedElsewhere = unreferenced.Count(entry => entry.usedByScenes.Count > 0);
-            var warning = usedElsewhere > 0
-                ? $"\n\n{usedElsewhere} of them are used by a scene that is not in the build. Those scenes will " +
-                  "show missing references until you move the files back."
+            var moving = Movable().ToList();
+            if (moving.Count == 0) return;
+
+            var held = unreferenced.Count - moving.Count;
+            var note = held > 0
+                ? $"\n\n{held} more are listed but held back: something in the project still has them assigned. " +
+                  "Nothing that is still pointed at is moved."
                 : "";
 
             var confirmed = EditorUtility.DisplayDialog(
                 "Move to Archive",
-                $"Move {unreferenced.Count} files ({ArsmiBuildSizeRecord.Bytes(unreferencedBytes)}) out of Assets?\n\n" +
+                $"Move {moving.Count} files ({ArsmiBuildSizeRecord.Bytes(moving.Sum(entry => entry.bytes))}) out of Assets?\n\n" +
                 $"They go to {ArchiveRoot}, keeping their folder structure, with their .meta files. " +
-                "Because the .meta travels too, moving anything back restores every reference to it." + warning,
+                "Because the .meta travels too, moving anything back restores every reference to it." + note,
                 "Move", "Cancel");
 
             if (!confirmed) return;
@@ -497,7 +787,7 @@ namespace ArsmiGames.EditorTools
             var moved = 0;
             var failed = new List<string>();
 
-            foreach (var entry in unreferenced)
+            foreach (var entry in moving)
             {
                 try
                 {
@@ -546,15 +836,18 @@ namespace ArsmiGames.EditorTools
 
         private void DeleteUnreferenced()
         {
-            if (unreferenced == null || unreferenced.Count == 0) return;
+            if (unreferenced == null) return;
+
+            var deleting = Movable().ToList();
+            if (deleting.Count == 0) return;
 
             // Two sentences and a count, because this is the one irreversible thing in the window
             // and the list it works from is explicitly a best guess.
             var confirmed = EditorUtility.DisplayDialog(
                 "Delete unreferenced assets",
-                $"Permanently delete {unreferenced.Count} files ({ArsmiBuildSizeRecord.Bytes(unreferencedBytes)})?\n\n" +
-                "This list is a guess. It cannot see Addressables, asset bundles, or Resources.Load with a " +
-                "name built at runtime, and it treats scenes you have not ticked in Build Settings as unused.\n\n" +
+                $"Permanently delete {deleting.Count} files ({ArsmiBuildSizeRecord.Bytes(deleting.Sum(entry => entry.bytes))})?\n\n" +
+                "Nothing in the project points at any of them. That is still a guess about the build: it cannot " +
+                "see Resources.Load with a name built at runtime, or an asset a script finds by name.\n\n" +
                 "Move to Archive does the same job reversibly. If this project is not in version control, " +
                 "there is no way back from this one.",
                 "Delete", "Cancel");
@@ -565,7 +858,7 @@ namespace ArsmiGames.EditorTools
             AssetDatabase.StartAssetEditing();
             try
             {
-                foreach (var entry in unreferenced)
+                foreach (var entry in deleting)
                 {
                     if (!AssetDatabase.DeleteAsset(entry.path)) failed.Add(entry.path);
                 }
@@ -576,7 +869,7 @@ namespace ArsmiGames.EditorTools
                 AssetDatabase.Refresh();
             }
 
-            Debug.Log($"[Arsmi] Deleted {unreferenced.Count - failed.Count} unreferenced asset(s).");
+            Debug.Log($"[Arsmi] Deleted {deleting.Count - failed.Count} unreferenced asset(s).");
             foreach (var path in failed) Debug.LogWarning($"[Arsmi] Could not delete {path}.");
 
             unreferenced = null;

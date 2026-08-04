@@ -119,12 +119,18 @@ Unity.exe -quit -batchmode -projectPath . \
   automatically at the end of every WebGL build, including one started from `File → Build Settings`.
 - **Heavy files** — the biggest files on disk. Useful before you have ever built, and for finding
   source art that was never meant to ship.
-- **Unreferenced** — assets no enabled scene reaches, that are not in a `Resources` folder and not
-  preloaded. Each row names **the scenes that do use it**, so you can tell a genuine orphan from
-  something a scene you have not ticked depends on. **Move to Archive** is the button to reach for:
-  it moves them to `Archive/`, outside `Assets`, keeping the folder structure — `Assets/Graphics/Art/cat.png`
-  becomes `Archive/Graphics/Art/cat.png`. The `.meta` moves too, so moving anything back restores
-  every reference to it. Delete is there as well and says plainly that it is the irreversible one.
+- **Unreferenced** — assets nothing in the build reaches: no enabled scene, no `Resources` folder,
+  not preloaded, not named by Project Settings, not in an asset bundle or the Addressables
+  catalogue, and not `#include`d by a shader that ships. Each row names **what still points at
+  it**, so you can tell a genuine orphan from a material a prefab has assigned.
+
+  **Move and Delete only ever touch rows nothing points at.** Anything still assigned to
+  something is listed as build weight and left where it is — including when the thing holding it
+  is itself on the list, so archive the prefab, scan again, and its material moves on the second
+  pass. **Move to Archive** is the button to reach for: it moves them to `Archive/`, outside
+  `Assets`, keeping the folder structure — `Assets/Graphics/Art/cat.png` becomes
+  `Archive/Graphics/Art/cat.png`. The `.meta` moves too, so moving anything back restores every
+  reference to it. Delete is there as well and says plainly that it is the irreversible one.
 - **Shrink** — the settings worth changing (strip engine code is usually the largest single saving),
   quick-select buttons for heavy assets, textures, audio and models above a size you choose, and
   bulk import settings applied to whatever is selected in the Project window.

@@ -5,6 +5,51 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.1] - 2026-08-04
+
+### Fixed
+
+- **The *Unreferenced* tab offered to archive the assets a URP project cannot render without.**
+  A URP project keeps its render pipeline asset, its renderer, its global settings and its default
+  volume profile in `Assets`, and the only thing pointing at any of them is Project Settings — no
+  scene does. The scan rooted at scenes, Resources and preloaded assets, so it called all four
+  unreferenced and *Move to Archive* took them out of the project. Always-included shaders,
+  preloaded shader variant collections, per-quality-level pipeline overrides and the splash screen
+  logo were in the same position.
+
+  Project Settings are now roots. Walked generically over their serialised object references
+  rather than field by field, so it catches the ones a hand-written list would miss.
+
+- **A shipping shader's `#include` files were reported unreferenced.**
+  `#include "TMPro_Properties.cginc"` is a filename in a string, not a GUID, so the asset database
+  does not model the edge and the include looked like litter. Archiving it stopped the shader
+  compiling — every piece of text in the project turns magenta, and the cause is a file that is no
+  longer in `Assets`. In this repo's own project, five of TextMesh Pro's `.cginc` and `.hlsl`
+  files were on the move list while the shader that includes one of them was shipping.
+
+  Include edges are now followed in text, transitively, along with the bare GUID a Shader Graph
+  Custom Function node stores for its HLSL file.
+
+- **Asset bundles and Addressables are no longer invisible.** Anything with an AssetBundle name,
+  and everything the Addressables catalogue names, now counts as reachable. The tab had said in
+  its own warning box that it could not see either.
+
+### Changed
+
+- **Move and Delete only ever touch rows nothing points at.** Anything still assigned to
+  something — a scene that is not ticked in Build Settings, a prefab, a material, a settings
+  asset — is listed as build weight and left where it is, with the row naming what holds it. This
+  is stricter than before deliberately: a material on a prefab no scene has yet is assigned work,
+  and reachability from the build cannot tell it apart from litter.
+
+  It holds even when the thing pointing at it is itself on the list. A dead prefab and its dead
+  material both being weight does not make it safe to take the material out from under the prefab
+  in the same click — archive the prefab, scan again, and the material moves on the second pass.
+  Two passes to clear a chain is the price of never breaking a live reference.
+
+  The buttons now say how many files they will take, and *Select orphans* is *Select movable*, for
+  the same reason.
+
 ## [4.5.0] - 2026-07-27
 
 ### Added
