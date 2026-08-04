@@ -5,6 +5,37 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.2] - 2026-08-04
+
+### Fixed
+
+- **With *Include scripts* on, the *Unreferenced* tab archived scripts the project compiles
+  against.** A scene references a MonoBehaviour's `.cs` by GUID, and that is the only script edge
+  Unity records. What that script then names — a helper class, an interface, a struct, a static
+  utility — is resolved by the compiler, so every one of those files looked unreferenced. Moving
+  them stopped the script that *is* in the scene from compiling, which takes the whole project
+  down rather than one asset with it.
+
+  This package's own sample was the case exactly: `DemoBootstrap` is the one script on a
+  GameObject, and `DemoUI`, `KidsQuiz` and `SdkFunctionPanel` are reached only through the types
+  it names. All three were on the move list.
+
+  C# references are now followed. A script counts as used if something references it by GUID, if
+  any script already counted as used names a type it declares, or if an Editor script needs it —
+  transitively, and including interfaces, attributes by their short name, extension methods by
+  their own name, the other halves of a partial class, and a type named only in a string the way
+  `AddComponent("Enemy")` names one. Editor scripts seed the walk because they are never archived
+  and so have to go on compiling.
+
+  Deliberately generous: keeping a file that is merely mentioned costs a line in a list, and
+  missing an edge costs a project that does not build.
+
+- **Assets named in a string are no longer invisible.** `Resources.Load("Sprites/coin")`,
+  `Shader.Find("Custom/Water")` — a literal matching an asset's file name, or the name a shader
+  declares on its own first line, now keeps that asset. The tab had been warning that it could not
+  see these; it can see the literal ones, which is most of them. Names built out of pieces at
+  runtime are still beyond it, and it still says so.
+
 ## [4.5.1] - 2026-08-04
 
 ### Fixed

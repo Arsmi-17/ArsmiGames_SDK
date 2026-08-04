@@ -121,8 +121,15 @@ Unity.exe -quit -batchmode -projectPath . \
   source art that was never meant to ship.
 - **Unreferenced** — assets nothing in the build reaches: no enabled scene, no `Resources` folder,
   not preloaded, not named by Project Settings, not in an asset bundle or the Addressables
-  catalogue, and not `#include`d by a shader that ships. Each row names **what still points at
-  it**, so you can tell a genuine orphan from a material a prefab has assigned.
+  catalogue, not `#include`d by a shader that ships, and not named in code — neither a type a live
+  script mentions nor an asset a string names, the way `Resources.Load` and `Shader.Find` take
+  one. Each row names **what still points at it**, so you can tell a genuine orphan from a
+  material a prefab has assigned.
+
+  **Include scripts** is off by default, because a script compiles into the build whether or not a
+  scene references it — it is weight rather than litter. With it on, a helper class reached only
+  through another script is not listed: the C# references are followed, so archiving cannot break
+  the compile.
 
   **Move and Delete only ever touch rows nothing points at.** Anything still assigned to
   something is listed as build weight and left where it is — including when the thing holding it

@@ -266,17 +266,21 @@ namespace ArsmiGames.EditorTools
                 "Assets that nothing in the build reaches: not used by a scene ticked in Build Settings, not in " +
                 "a Resources folder, not preloaded, not named by Project Settings, not in an asset bundle or " +
                 "the Addressables catalogue, and not included by a shader that ships.\n\n" +
-                "Read this as a list to review, never as a list to delete blindly. It still cannot see " +
-                "Resources.Load called with a name built at runtime, a Shader.Find by name, or anything a " +
-                "native plugin opens.\n\n" +
+                "Names in code count too: a type a script that ships names, and an asset named in a string " +
+                "the way Resources.Load and Shader.Find take one.\n\n" +
+                "Read this as a list to review, never as a list to delete blindly. It still cannot see a name " +
+                "built at runtime out of pieces, or anything a native plugin opens.\n\n" +
                 "Move and Delete only ever touch rows nothing points at. Anything still assigned to a scene, a " +
                 "prefab, a material or a settings asset is listed as build weight and left where it is.",
                 MessageType.Warning);
 
             includeScriptsInScan = EditorGUILayout.ToggleLeft(
                 new GUIContent("Include scripts",
-                    "Off by default: scripts compile into the build whether or not a scene references them, " +
-                    "so an 'unreferenced' script is usually a false positive."),
+                    "Off by default: a script compiles into the build whether or not a scene references it, so " +
+                    "it is weight rather than litter.\n\n" +
+                    "When on, a script counts as used if a scene or asset references it, if any script that is " +
+                    "used names a type it declares, or if an Editor script needs it — so a helper class reached " +
+                    "only through another script is not listed."),
                 includeScriptsInScan);
 
             if (GUILayout.Button("Scan project", GUILayout.Width(110f))) ScanUnreferenced();
@@ -395,6 +399,8 @@ namespace ArsmiGames.EditorTools
                 StringComparer.OrdinalIgnoreCase);
 
             AddShaderSources(used, all);
+            AddAssetsNamedInCode(used, all);
+            if (includeScriptsInScan) AddScriptsReachedByCode(used, all);
 
             var results = new List<Unreferenced>();
             long total = 0;
@@ -579,6 +585,219 @@ namespace ArsmiGames.EditorTools
             }
 
             return string.Join("/", parts);
+        }
+
+        /// <summary>
+        /// Follow the references C# makes, which the asset database does not model either.
+        /// </summary>
+        /// <remarks>
+        /// A scene references a MonoBehaviour's .cs by GUID, and that is the only script edge Unity
+        /// records. What that script then names — a helper class, an interface, a struct, a static
+        /// utility, a ScriptableObject type — is resolved by the compiler, not by a GUID, so every
+        /// one of those files looks unreferenced. Archive them and the script that is in the scene
+        /// stops compiling, which takes the whole project down rather than one asset with it.
+        ///
+        /// This repository's own sample is the case exactly: DemoBootstrap is the one script on a
+        /// GameObject, and DemoUI, KidsQuiz and SdkFunctionPanel are reached only through it.
+        ///
+        /// So: seed with the scripts something already reaches, take every identifier they name,
+        /// and keep whatever file declares a type of that name — then repeat, because that file
+        /// names things too. Editor scripts seed as well: they are never archived, so they have to
+        /// go on compiling, and what they reach has to stay.
+        ///
+        /// Deliberately generous. Matching an identifier against declared type names keeps a file
+        /// that is merely mentioned, which costs a few kilobytes of listing; missing an edge costs
+        /// a project that does not build.
+        /// </remarks>
+        private static void AddScriptsReachedByCode(HashSet<string> used, string[] all)
+        {
+            var scripts = all.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (scripts.Length == 0) return;
+
+            var facts = new Dictionary<string, CodeFacts>(StringComparer.OrdinalIgnoreCase);
+            foreach (var path in scripts) facts[path] = ReadCode(path);
+
+            var declaredIn = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+            foreach (var pair in facts)
+            {
+                foreach (var name in pair.Value.declares)
+                {
+                    if (!declaredIn.TryGetValue(name, out var files)) declaredIn[name] = files = new List<string>();
+                    files.Add(pair.Key);
+                }
+            }
+
+            // An Editor script is never archived, so it must keep compiling, so what it names stays.
+            foreach (var path in scripts.Where(IsEditorOnly)) used.Add(path);
+
+            var pending = new Queue<string>(scripts.Where(used.Contains));
+            while (pending.Count > 0)
+            {
+                if (!facts.TryGetValue(pending.Dequeue(), out var code)) continue;
+
+                foreach (var name in code.names) Keep(name);
+
+                // A type named only in a string: AddComponent("Enemy"), Type.GetType("Enemy").
+                foreach (var literal in code.literals) Keep(LastSegment(literal));
+            }
+
+            void Keep(string name)
+            {
+                if (string.IsNullOrEmpty(name)) return;
+
+                Declaring(name);
+                // [Serializable] is a class called SerializableAttribute.
+                Declaring(name + "Attribute");
+            }
+
+            void Declaring(string name)
+            {
+                if (!declaredIn.TryGetValue(name, out var files)) return;
+
+                foreach (var file in files)
+                {
+                    if (used.Add(file)) pending.Enqueue(file);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Assets a script names in a string rather than by reference.
+        /// </summary>
+        /// <remarks>
+        /// <c>Resources.Load("Sprites/coin")</c>, <c>Shader.Find("Custom/Water")</c>, an asset bundle
+        /// asked for by name — the tab's own warning box has always admitted it cannot see these.
+        /// It can see the literal ones, which is most of them: a name that matches an asset's file
+        /// name, or the name a shader declares on its first line, keeps that asset.
+        ///
+        /// Every script in Assets is read, not only the ones something reaches, because every
+        /// script in Assets compiles into the player and may run. Three characters minimum, so a
+        /// literal like "on" does not keep an asset called On.
+        /// </remarks>
+        private static void AddAssetsNamedInCode(HashSet<string> used, string[] all)
+        {
+            var scripts = all.Where(path => path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (scripts.Length == 0) return;
+
+            var byName = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            void Index(string name, string path)
+            {
+                if (string.IsNullOrEmpty(name) || name.Length < 3) return;
+                if (!byName.TryGetValue(name, out var paths)) byName[name] = paths = new List<string>();
+                paths.Add(path);
+            }
+
+            foreach (var path in all)
+            {
+                if (path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase)) continue;
+                Index(Path.GetFileNameWithoutExtension(path), path);
+
+                // Shader.Find takes the name declared inside the file, not the file's own name.
+                if (path.EndsWith(".shader", StringComparison.OrdinalIgnoreCase)) Index(DeclaredShaderName(path), path);
+            }
+
+            foreach (var path in scripts)
+            {
+                foreach (var literal in ReadCode(path).literals)
+                {
+                    Keep(literal);
+                    // "Sprites/coin" is a path to an asset called coin.
+                    Keep(LastSegment(literal));
+                }
+            }
+
+            void Keep(string name)
+            {
+                if (string.IsNullOrEmpty(name) || !byName.TryGetValue(name, out var paths)) return;
+                foreach (var path in paths) used.Add(path);
+            }
+        }
+
+        /// <summary>The name a shader declares — <c>Shader "Custom/Water"</c> — which is what Shader.Find takes.</summary>
+        private static string DeclaredShaderName(string path)
+        {
+            try
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    File.ReadAllText(path), "^\\s*Shader\\s+\"([^\"]+)\"",
+                    System.Text.RegularExpressions.RegexOptions.Multiline);
+                return match.Success ? match.Groups[1].Value : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static string LastSegment(string value) =>
+            string.IsNullOrEmpty(value) ? value : value.Substring(value.LastIndexOf('/') + 1);
+
+        /// <summary>What a C# file declares, what it names, and the strings in it.</summary>
+        private sealed class CodeFacts
+        {
+            public readonly HashSet<string> declares = new HashSet<string>(StringComparer.Ordinal);
+            public readonly HashSet<string> names = new HashSet<string>(StringComparer.Ordinal);
+            public readonly List<string> literals = new List<string>();
+        }
+
+        /// <summary>
+        /// Read a C# file well enough to know what it declares and what it mentions.
+        /// </summary>
+        /// <remarks>
+        /// Text, not a parser. A real one would mean shipping Roslyn to answer a question whose
+        /// wrong answers are already handled by leaning generous — the cost of naming one type too
+        /// many is that a file stays in the project.
+        /// </remarks>
+        private static CodeFacts ReadCode(string path)
+        {
+            var facts = new CodeFacts();
+
+            string text;
+            try { text = File.ReadAllText(path); }
+            catch { return facts; }
+
+            const string Literal = "\"([^\"\\\\\r\n]*)\"";
+
+            // Literals first, whole; then out, so a type name inside a comment or a string is not
+            // mistaken for code naming that type.
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, Literal))
+            {
+                facts.literals.Add(match.Groups[1].Value);
+            }
+
+            text = System.Text.RegularExpressions.Regex.Replace(text, Literal, "\"\"");
+            text = System.Text.RegularExpressions.Regex.Replace(text, "//[^\r\n]*", "");
+            text = System.Text.RegularExpressions.Regex.Replace(text, "/\\*.*?\\*/", "",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\\b(?:class|struct|interface|enum|record)\\s+([A-Za-z_]\\w*)"))
+            {
+                facts.declares.Add(match.Groups[1].Value);
+            }
+
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\\bdelegate\\s+[\\w<>\\[\\],\\.\\s]+?\\s+([A-Za-z_]\\w*)\\s*\\("))
+            {
+                facts.declares.Add(match.Groups[1].Value);
+            }
+
+            // An extension method is reached by its own name, never by its class's, so the file
+            // holding it has to be findable by the method name too.
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\\b([A-Za-z_]\\w*)\\s*\\(\\s*this\\s+[\\w<>\\[\\],\\.]+\\s+\\w+"))
+            {
+                facts.declares.Add(match.Groups[1].Value);
+            }
+
+            foreach (System.Text.RegularExpressions.Match match in
+                     System.Text.RegularExpressions.Regex.Matches(text, "\\b[A-Za-z_]\\w*\\b"))
+            {
+                facts.names.Add(match.Value);
+            }
+
+            return facts;
         }
 
         private static bool IsShaderSource(string path) =>
