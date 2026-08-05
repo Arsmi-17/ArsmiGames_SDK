@@ -179,11 +179,36 @@
         productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
         productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
         showBanner: unityShowBanner,
-        devicePixelRatio: Math.min(
-          (/Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-            (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)) ? 1 : 2,
-          Math.max(1, window.devicePixelRatio || 1)
-        ),
+
+        /*
+          How many device pixels Unity renders per CSS pixel.
+
+          This is a multiplier, not a resolution, and the browser already knows the right one
+          for the device it is on — 2 on one phone, 3 on the next, 3 on an iPhone, 2 on an
+          iPad. So there is no device list to keep here; window.devicePixelRatio is the
+          answer, and Unity's own default is to use it as it comes:
+
+              JS_SystemInfo_GetPreferredDevicePixelRatio: function() {
+                return Module.matchWebGLToCanvasSize == false ? 1
+                     : Module.devicePixelRatio || window.devicePixelRatio || 1;
+              }
+
+          Note which wins. Setting this field at all overrides the browser, which is why what
+          used to be here was so costly: it sniffed the user agent and forced 1 on anything
+          that looked like a phone. That is the line Unity ships commented out in its own
+          default template, under "to lower canvas resolution on mobile devices to gain some
+          performance" — an opt-in sacrifice, which this template had permanently on.
+
+          On a DPR 3 phone it meant Unity rendered a 640x360 framebuffer and the browser
+          stretched it over 1920x1080 of glass: a third of the detail in each direction,
+          about a sixteenth of the pixels a desktop got, and every edge in the game soft.
+
+          What is left is only a ceiling and a floor. The ceiling keeps a 4K desktop or a DPR 4
+          phone from rendering sixteen megapixels of a game that does not need them; the floor
+          stops a zoomed-out browser reporting less than 1 from making things worse than
+          native. Between the two the device's own number is used, whatever it is.
+        */
+        devicePixelRatio: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
       };
 
       // The canvas size is owned entirely by the orientation-lock CSS above. Setting it here

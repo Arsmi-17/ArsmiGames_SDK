@@ -5,6 +5,42 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.3] - 2026-08-05
+
+### Fixed
+
+- **Every WebGL build rendered at a third of a phone's resolution.** The template set
+  `config.devicePixelRatio`, sniffing the user agent and forcing **1** on anything that looked
+  like a phone. That field overrides the browser — Unity's loader reads
+  `Module.devicePixelRatio || window.devicePixelRatio || 1`, in that order — so the device's own
+  answer was thrown away on every mobile device.
+
+  It is the line Unity ships **commented out** in its own default template, under *"to lower
+  canvas resolution on mobile devices to gain some performance"*. An opt-in sacrifice, which this
+  template had permanently on for every phone.
+
+  On a DPR 3 phone it meant Unity rendered a 640×360 framebuffer and the browser stretched it
+  across 1920×1080 of glass — a third of the detail in each direction, about a sixteenth of the
+  pixels the same build gave a desktop, and every edge in the game soft. Desktops were unaffected,
+  which is why it looked like a mobile hardware limit rather than a line of template code.
+
+  Now `Math.min(2, Math.max(1, window.devicePixelRatio || 1))`: the device's own ratio, with a
+  ceiling so a 4K desktop or a DPR 4 phone does not render sixteen megapixels of a game that does
+  not need them, and a floor so a zoomed-out browser reporting less than 1 cannot go below native.
+  There is no device list to maintain — the browser already knows, and every phone reports
+  differently.
+
+  In practice: a 1600×720 Android at DPR 2 and an iPhone at DPR 3 both go from 1× to 2×, four
+  times the pixels. Desktops are unchanged.
+
+- **Touchscreen laptops were treated as phones.** The same check matched
+  `(pointer: coarse)`, so a desktop with a touchscreen was forced to 1 as well. The sniff is gone
+  entirely; nothing now branches on what kind of device is asking.
+
+  Nothing in a game needs to change for this. The template is reinstalled from the package on the
+  next domain reload and the fix ships with the next build — but note that reinstall **overwrites**
+  `Assets/WebGLTemplates/ArsmiGames/`, so any local edits to that copy are lost.
+
 ## [4.5.2] - 2026-08-04
 
 ### Fixed
