@@ -5,6 +5,91 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.5] - 2026-08-29
+
+### Added
+
+- **Your game can now be told it is on the platform.** Until now it could not find out. The
+  JavaScript bridge subscribes to every platform message on your behalf whether a host is there
+  or not, and `OnContext` arrives either way carrying a locally guessed context — so from C# a
+  build inside the player page and a build opened from a `file://` URL looked identical.
+
+  ```csharp
+  GameHubBridge.Instance.OnConnection += c => {
+    if (c.Connected) StartOnlineRun(c.GameId);
+    else             StartOfflineRun();
+  };
+  ```
+
+  `GameHubConnection` carries `Connected`, a `Reason` when it is false, and — when it is true —
+  `SessionId`, `GameId`, `Slug`, `Role`, `Preview`, `PlatformVersion` and `Protocol`. Also
+  readable as `GameHubBridge.Instance.Connection`, with `IsConnected` as the shorthand.
+
+- **`ConnectionKnown`**, because "not yet" and "no" are different answers. `IsConnected` is false
+  before the handshake lands and false for ever off-platform; a game that treats the first as the
+  second shows its offline screen for a moment on every single load. `OnConnection` does not fire
+  until there is something true to say.
+
+- **A definite no.** If no platform answers within a second and a half, the event fires with
+  `Connected = false` and `Reason = "standalone"`. A signal that only ever fired on success would
+  leave a genuinely offline game waiting for ever. A host that answers after that still connects,
+  and your handler is called again.
+
+- **An answer in the Editor**, `Reason = "editor"`, raised by the package itself. There is no
+  JavaScript bridge in the Editor, so without this a game testing its own offline path would wait
+  on a callback that could never arrive.
+
+### Notes
+
+- Subscribing after the answer has arrived fires immediately. That is the normal case, not an
+  edge one: `Awake()` starts the JavaScript bridge, which is answered at once when the handshake
+  has already happened, so the acknowledgment routinely reaches C# before any game's `Start()`
+  runs. An event that only fired on change would be missed by nearly every game.
+- Nothing new crosses the frame boundary — the wire protocol is still 2, and this is the SDK
+  reporting a handshake it already had. Subscribing claims no capability and does not affect the
+  publish gate.
+
+## [4.5.4] - 2026-08-16
+
+### Added
+
+- **The platform now tells your game what device it is running on.** A WebGL build runs in an
+  iframe the platform sized, so `Screen.width` measures the frame and not the device — a desktop
+  browser at a narrow window and a real phone look identical from inside a build. The platform
+  detects the device and sends it at handshake.
+
+  ```csharp
+  GameHubBridge.Instance.OnDevice += device => {
+    if (device.Touch) ShowTouchControls();
+    else              ShowKeyboardHints();
+  };
+  ```
+
+  `GameHubDevice` carries `Type` (`"mobile"`, `"tablet"` or `"desktop"`), the input flags
+  `Touch` / `Keyboard` / `Mouse` / `Gamepad`, and `Source`. Also readable at any time as
+  `GameHubBridge.Instance.Device`.
+
+  `Type` and the input flags are deliberately separate: an iPad with a keyboard case is a tablet
+  that types, and a touchscreen laptop is a desktop that taps. Gate features on `Type`, choose
+  controls on the flags.
+
+  `Keyboard` is the best signal available rather than a certainty — nothing can tell a build
+  whether a keyboard is attached. `Gamepad` is a snapshot taken at handshake; use Unity's own
+  input system for a pad connected later. Neither `Type` nor the flags change during a session.
+
+- **`DeclareDeviceSupport(params string[] types)`** — say which devices your game is built for,
+  e.g. `DeclareDeviceSupport("desktop")`. It only ever restricts your own game. The platform reads
+  it during upload preview and pre-fills the **Supported devices** field; players on other devices
+  see a note above the play button and **are not blocked from playing**. Declaring nothing means
+  every device and is what most games should do.
+
+  None of this is required, and none of it affects whether a game can be published.
+
+### Internal
+
+- `ReadJsonObject(json, field)` — the existing JSON readers only ever saw top-level fields, and
+  `device` is the first nested object the bridge has had to read.
+
 ## [4.5.3] - 2026-08-05
 
 ### Fixed

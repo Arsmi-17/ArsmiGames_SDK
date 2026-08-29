@@ -126,6 +126,52 @@ void Apply() {
 }
 ```
 
+## Am I on the platform? (4.5.5)
+
+```csharp
+struct GameHubConnection {
+    bool   Connected;
+    string Reason;            // why not: "standalone" (no host answered) or "editor"
+    string SessionId, GameId, Slug, Role;
+    bool   Preview;
+    string PlatformVersion;   // the SDK the platform serving you is on; null if it did not say
+    int    Protocol;          // the wire protocol, which is what decides compatibility
+}
+
+GameHubConnection Connection            // the whole answer
+bool IsConnected                        // Connection.Connected
+bool ConnectionKnown                    // whether the question has been answered at all
+event Action<GameHubConnection> OnConnection
+```
+
+```csharp
+void Start()
+{
+    GameHubBridge.Instance.OnConnection += c =>
+    {
+        if (c.Connected) StartOnlineRun(c.GameId);
+        else             StartOfflineRun();
+    };
+}
+```
+
+`OnConnection` fires once there is an **answer**, and again if it changes. Subscribing after the
+answer has already arrived fires it immediately — which is the normal case here, not an edge one:
+`Awake()` starts the JavaScript bridge, which is answered at once when the handshake has already
+happened, so the acknowledgment routinely reaches C# before any game's `Start()` runs. An event
+that only fired on change would be missed by nearly every game.
+
+- **Do not read `IsConnected` on the first frame.** It is false before the handshake and false for
+  ever off-platform. `ConnectionKnown` separates the two; `OnConnection` waits for you.
+- **It answers in the Editor too**, with `Connected = false, Reason = "editor"`. There is no
+  JavaScript bridge there, so without that a game testing its offline path would wait on a
+  callback that cannot arrive.
+- **It is not `OnContext`.** That arrives whether or not a platform is there, carrying a locally
+  guessed context — from C# a game inside the player page and a game opened from a `file://` URL
+  looked identical, which is the gap this closes.
+
+Subscribing claims nothing: this is not one of the wiring checks the publish gate reads.
+
 ## Identity
 
 ```csharp
@@ -140,6 +186,51 @@ void RequestLogin(string reason = "game")
 
 Key your own backend records on `PlayerId`. Never build login on `Email`: it is null for most
 games and for every guest, and it is not yours to assume.
+
+## Device (4.5.4)
+
+```csharp
+struct GameHubDevice { string Type; bool Touch, Keyboard, Mouse, Gamepad; string Source; }
+
+GameHubDevice Device                     // Type is null until the first context arrives
+event Action<GameHubDevice> OnDevice     // fires once at handshake
+void DeclareDeviceSupport(params string[] types)
+```
+
+```csharp
+void Start()
+{
+    GameHubBridge.Instance.OnDevice += device =>
+    {
+        if (device.Touch) ShowTouchControls();
+        else              ShowKeyboardHints();
+    };
+}
+```
+
+All of it is optional. A game that ignores it behaves exactly as before and is treated as
+supporting every device.
+
+`Type` is `"mobile"`, `"tablet"` or `"desktop"`. **Ask the platform rather than sniffing:** a WebGL
+build runs in an iframe the platform sized, so `Screen.width` measures the frame and not the
+device.
+
+`Type` and the input flags are two different facts on purpose — an iPad with a keyboard case is a
+tablet that types, a touchscreen laptop is a desktop that taps. Gate features on `Type`, choose
+controls on the flags. `Keyboard` is the best available signal rather than a certainty; `Gamepad`
+is a snapshot taken at handshake, so use Unity's own input system for a pad connected later.
+
+`Source` is `"platform"` when the host told us and `"local"` when the SDK guessed with no host
+present. In a real WebGL build served by the platform it is always `"platform"`.
+
+Neither `Type` nor the flags change during a session. For rotation and resize, use
+`OnFullscreenChanged` and Unity's own screen metrics.
+
+`DeclareDeviceSupport("desktop")` says which devices your game is built for. It only ever
+restricts your own game. The platform reads it during upload preview and pre-fills the
+**Supported devices** field; players on other devices see a note above the play button and
+**are not blocked**. Declaring nothing means every device, is completely normal, and has no
+effect on whether your game can be published.
 
 ## Flux Coins
 

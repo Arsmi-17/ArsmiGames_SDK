@@ -8,6 +8,7 @@ public class GameHubBridge : MonoBehaviour
     [DllImport("__Internal")] private static extern void GameHubBridge_Emit(string eventName, string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_Log(string level, string message, string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_RequestFullscreen(string orientation);
+    [DllImport("__Internal")] private static extern void GameHubBridge_DeclareDevices(string json);
     [DllImport("__Internal")] private static extern void GameHubBridge_RequestLogin(string reason);
     [DllImport("__Internal")] private static extern void GameHubBridge_SetMuted(int muted);
     [DllImport("__Internal")] private static extern void GameHubBridge_ReportWiring(string json);
@@ -54,6 +55,13 @@ public class GameHubBridge : MonoBehaviour
         // that had wired everything up correctly could be told it had not.
         yield return null;
         ReportWiring();
+
+#if !UNITY_WEBGL || UNITY_EDITOR
+        // In the Editor there is no .jslib, so nothing will ever call OnGameHubConnection and
+        // the question would stay unanswered for the whole session. Answer it here, or a game
+        // testing its own offline path in the Editor waits on a callback that cannot arrive.
+        if (!ConnectionKnown) SetConnection(new GameHubConnection { Connected = false, Reason = "editor" });
+#endif
     }
 
     // ---- what this game actually wired up ---------------------------------------
@@ -640,6 +648,45 @@ public class GameHubBridge : MonoBehaviour
         return map;
     }
 
+    /// <summary>
+    /// The raw text of a nested object field, braces included, or "" when it is absent.
+    ///
+    /// Every other reader here works on top-level fields only — FindField stops at the first
+    /// matching "name": in the string. `device` is the first nested object any game needs to
+    /// read, so it gets the smallest thing that works: find the field, then walk to its matching
+    /// close brace counting depth, ignoring braces inside strings.
+    /// </summary>
+    private static string ReadJsonObject(string json, string field)
+    {
+        if (string.IsNullOrEmpty(json)) return "";
+        var at = FindField(json, field);
+        if (at < 0) return "";
+        while (at < json.Length && char.IsWhiteSpace(json[at])) at++;
+        if (at >= json.Length || json[at] != '{') return "";
+
+        var start = at;
+        var depth = 0;
+        var inString = false;
+        for (; at < json.Length; at++)
+        {
+            var c = json[at];
+            if (inString)
+            {
+                if (c == '\\') { at++; continue; }
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == '{') depth++;
+            else if (c == '}')
+            {
+                depth--;
+                if (depth == 0) return json.Substring(start, at - start + 1);
+            }
+        }
+        return "";
+    }
+
     /// <summary>Index just past the colon of a top-level "field": in the payload.</summary>
     private static int FindField(string json, string field)
     {
@@ -710,7 +757,175 @@ public class GameHubBridge : MonoBehaviour
     public void OnGameHubChallengeStart(string json) => OnChallengeStart?.Invoke(json ?? "{}");
     public void OnGameHubChallengeLeaderboard(string json) => OnChallengeLeaderboard?.Invoke(json ?? "{}");
     public void OnGameHubChallengeEnd(string json) => OnChallengeEnd?.Invoke(json ?? "{}");
-    public void OnGameHubContext(string json) => OnContext?.Invoke(json ?? "{}");
+    public void OnGameHubContext(string json)
+    {
+        var text = json ?? "{}";
+        OnContext?.Invoke(text);
+
+        var raw = ReadJsonObject(text, "device");
+        if (raw.Length == 0) return;   // no device in this context: keep the one we have
+
+        var input = ReadJsonObject(raw, "input");
+        Device = new GameHubDevice
+        {
+            Type = ReadJsonString(raw, "type"),
+            Touch = ReadJsonBool(input, "touch"),
+            Keyboard = ReadJsonBool(input, "keyboard"),
+            Mouse = ReadJsonBool(input, "mouse"),
+            Gamepad = ReadJsonBool(input, "gamepad"),
+            Source = ReadJsonString(raw, "source"),
+        };
+        OnDevice?.Invoke(Device);
+    }
+
+    /// <summary>
+    /// What the player is playing on. Decided by the platform, not by the build.
+    ///
+    /// `Type` is one of "mobile", "tablet", "desktop". `Source` is "platform" when the host
+    /// told us, and "local" when the SDK guessed because no host was present — which in a real
+    /// WebGL build served by the platform never happens.
+    /// </summary>
+    public struct GameHubDevice
+    {
+        public string Type;
+        public bool Touch;
+        public bool Keyboard;
+        public bool Mouse;
+        public bool Gamepad;
+        public string Source;
+    }
+
+    /// <summary>The device this game is running on. Type is null until the first context arrives.</summary>
+    public GameHubDevice Device { get; private set; }
+
+    /// <summary>
+    /// The device is known. Swap your controls here.
+    ///
+    /// Fires once at handshake, and it is not required — a game that ignores it is not penalised
+    /// and is treated as supporting every device.
+    /// </summary>
+    public event System.Action<GameHubDevice> OnDevice;
+
+    // ---- Am I on the platform? --------------------------------------------------
+    //
+    // A Unity game could not answer this. The .jslib subscribes to every platform message on
+    // the game's behalf whether a host is there or not, and OnContext arrives either way
+    // carrying a locally guessed context — so a game inside the player page and a game opened
+    // from a file:// URL looked identical from C#.
+    //
+    // The SDK now says it outright, and says NO as definitely as it says yes. That second half
+    // is the important one: a signal that only ever fires on success leaves a genuinely
+    // standalone game waiting for ever for a callback that is never coming.
+
+    /// <summary>What the platform acknowledged, or why it did not.</summary>
+    public struct GameHubConnection
+    {
+        /// <summary>True when this game is running inside the platform and the bridge handshook.</summary>
+        public bool Connected;
+        /// <summary>Why not, when Connected is false: "standalone" or "editor".</summary>
+        public string Reason;
+        public string SessionId;
+        public string GameId;
+        public string Slug;
+        /// <summary>How the game was opened: "player", "dashboard-preview", and so on.</summary>
+        public string Role;
+        public bool Preview;
+        /// <summary>The SDK version the platform serving this game is on. Null if it did not say.</summary>
+        public string PlatformVersion;
+        /// <summary>The wire protocol both sides are speaking. This, not a version, decides compatibility.</summary>
+        public int Protocol;
+    }
+
+    /// <summary>The whole answer. Connected is false until the acknowledgment lands.</summary>
+    public GameHubConnection Connection { get; private set; }
+
+    /// <summary>True once the platform has acknowledged this game.</summary>
+    public bool IsConnected => Connection.Connected;
+
+    /// <summary>
+    /// Whether the question has been answered at all.
+    ///
+    /// Read this before treating IsConnected == false as "offline". For the first moments of a
+    /// page load the honest answer is "not yet", and a game that showed its offline screen on
+    /// a bare false would flash it on every single load.
+    /// </summary>
+    public bool ConnectionKnown { get; private set; }
+
+    private System.Action<GameHubConnection> _onConnection;
+
+    /// <summary>
+    /// Called once there is an answer, and again if it changes.
+    ///
+    /// Fires immediately for a handler added after the answer is already in — which is the
+    /// normal case, not an edge one: Awake() starts the .jslib, which is answered at once when
+    /// the handshake has already happened, so the acknowledgment routinely reaches this class
+    /// before any game's Start() has run.
+    /// </summary>
+    public event System.Action<GameHubConnection> OnConnection
+    {
+        add
+        {
+            _onConnection += value;
+            if (ConnectionKnown && value != null) value(Connection);
+        }
+        remove { _onConnection -= value; }
+    }
+
+    /// <summary>Called by the .jslib. Not for games to call.</summary>
+    public void OnGameHubConnection(string json)
+    {
+        var text = json ?? "{}";
+        var next = new GameHubConnection
+        {
+            Connected = ReadJsonBool(text, "connected"),
+            Reason = ReadJsonString(text, "reason"),
+            SessionId = ReadJsonString(text, "sessionId"),
+            GameId = ReadJsonString(text, "gameId"),
+            Slug = ReadJsonString(text, "slug"),
+            Role = ReadJsonString(text, "role"),
+            Preview = ReadJsonBool(text, "preview"),
+            PlatformVersion = ReadJsonString(text, "platformVersion"),
+            Protocol = (int)(ReadJsonNumber(text, "protocol") ?? 0),
+        };
+        SetConnection(next);
+    }
+
+    private void SetConnection(GameHubConnection next)
+    {
+        var was = Connection;
+        var same = ConnectionKnown &&
+                   was.Connected == next.Connected &&
+                   was.SessionId == next.SessionId &&
+                   was.GameId == next.GameId;
+        Connection = next;
+        ConnectionKnown = true;
+        if (same) return;   // the host re-sent init; one connection is one acknowledgment
+        _onConnection?.Invoke(next);
+    }
+
+    /// <summary>
+    /// Declare the devices this game is built for, e.g. DeclareDeviceSupport("desktop").
+    ///
+    /// This only restricts your own game. The platform shows players on other devices a note
+    /// saying what the game is built for; it does not stop them playing. Declaring nothing
+    /// means every device.
+    /// </summary>
+    public void DeclareDeviceSupport(params string[] types)
+    {
+        var list = types ?? new string[0];
+        var json = new System.Text.StringBuilder("[");
+        for (var i = 0; i < list.Length; i++)
+        {
+            if (i > 0) json.Append(',');
+            json.Append('"').Append(Escape(list[i] ?? "")).Append('"');
+        }
+        json.Append(']');
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_DeclareDevices(json.ToString());
+#else
+        Debug.Log("[GameHub] DeclareDeviceSupport " + json);
+#endif
+    }
     /// <summary>True while the platform is showing the game fullscreen.</summary>
     public bool IsFullscreen { get; private set; }
 

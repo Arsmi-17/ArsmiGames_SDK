@@ -217,6 +217,7 @@ subscription is real evidence). Silence never counts as a pass.
 | Function | Publish? | Platform → game (you must) | Game → platform (you may) |
 |---|---|---|---|
 | **Handshake** | **Required** | `Awake` introduces the game; the bridge replies and reports capabilities. Just have a `GameHubBridge` in the first scene. | — |
+| **Connection** (4.5.5) | Optional | `OnConnection += c => …` → fires once there is an answer: `c.Connected` true on the platform, false with `c.Reason` `"standalone"` or `"editor"` when there is no host. | Nothing to send. `IsConnected`, `ConnectionKnown` and `Connection` read the same answer; subscribing late fires immediately. |
 | **Mute** | **Required** | `OnMuteChanged` → zero **all** audio (`AudioListener.volume = 0`). Subscribing acks it. | `SetMuted(true)` when your own sliders all reach 0; `false` when any rises. Skip if you have no volume UI. |
 | **Fullscreen** | **Required** | `OnFullscreenChanged` → subscribe to ack; re-fit only if you drive layout from code. | `RequestFullscreen()` — **only** if your game already has a fullscreen button. Do not add one. |
 | **Identity** | Required for **own-backend** save | `OnUserChanged` → read `hub.PlayerId` and key saves on it. `hub.Email` is null unless your game was granted it — never key on it. | `RequestUserState()` to ask for it. |

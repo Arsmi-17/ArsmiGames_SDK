@@ -41,6 +41,14 @@ mergeInto(LibraryManager.library, {
       if (window.GameHubBridge.onContext) window.GameHubBridge.onContext(function (payload) {
         window.__gameHubUnitySend("OnGameHubContext", payload);
       });
+      // The connection acknowledgment. Feature-guarded because gamehub-sdk.js is loaded from
+      // the platform at run time while this file is compiled into the build: a game built
+      // against a newer package can find itself running against an older SDK that has no
+      // onConnection, and an unguarded call there would throw inside Init and take every
+      // subscription below it with it.
+      if (window.GameHubBridge.onConnection) window.GameHubBridge.onConnection(function (payload) {
+        window.__gameHubUnitySend("OnGameHubConnection", payload);
+      });
       window.GameHubBridge.on("gamehub:audio:set", function (payload) {
         window.__gameHubUnitySend("OnGameHubMuted", payload);
       });
@@ -171,6 +179,16 @@ mergeInto(LibraryManager.library, {
     var eventName = UTF8ToString(eventPtr);
     if (!window.GameHubBridge || !window.GameHubBridge.ackEvent) return;
     window.GameHubBridge.ackEvent(eventName, !!handled);
+  },
+
+  /** C# declaring which devices the game is built for. Only ever restricts this game. */
+  GameHubBridge_DeclareDevices: function (jsonPtr) {
+    if (!window.GameHubBridge || !window.GameHubBridge.device) return;
+    try {
+      window.GameHubBridge.device.supports(JSON.parse(UTF8ToString(jsonPtr)));
+    } catch (err) {
+      console.warn("[GameHubUnity] DeclareDeviceSupport failed", err);
+    }
   },
 
   /** C# telling us what its game actually subscribed to. See engine:"unity" above. */
