@@ -69,7 +69,7 @@ the platform, or in the **SDK Assessment** page in admin.
 ## Building
 
 **Arsmi Games → Build WebGL…** (`Ctrl+Alt+B`) opens a window with everything the build depends
-on: the scenes going into it, the settings the platform requires, and **Portrait or Landscape**.
+on: the scenes going into it, the settings the platform requires, and **Landscape, Portrait or Auto**.
 Press *Build WebGL…*, pick a folder, upload it. There is nothing to edit afterwards.
 
 The scene list is there because **which scene loads first cannot be fixed after the build**. It
@@ -83,8 +83,18 @@ compressed build without the fallback decompressor does not load at all.
 
 The orientation you pick is written into the build's `index.html`, and the canvas is locked to
 it: a portrait build stays portrait on a landscape screen, with black bars down the sides,
-rather than stretching to fill. (If your game is not 9:16 / 16:9, change the one pair of
-numbers in the template's orientation-lock CSS.)
+rather than stretching to fill.
+
+**Auto** is the third choice, for a game that genuinely plays either way up. Instead of a fixed
+shape the canvas takes the shape of the window, so a phone held upright plays the game portrait
+and the same phone turned plays it landscape. It is one media query in the template — the
+browser re-evaluates it on rotation by itself, so there is nothing to run and nothing that can
+fail to run. Only pick it if your game really does lay out both ways: a landscape-only game
+built as Auto is squeezed into the portrait frame rather than letterboxed inside it, which is
+worse than the black bars the lock would have given it.
+
+(If your game is not 9:16 / 16:9, change the matching pairs in the template's orientation-lock
+CSS.)
 
 The build is also *checked*. Two callbacks run around every WebGL build — including one
 started from `File → Build Settings`, so the guarantee does not depend on which button you
@@ -103,7 +113,7 @@ and cannot reach the platform at all. No saves, no leaderboards, and *no
 error*, in either direction. It is a failure with no symptom except silence, so it is caught
 at build time instead.
 
-For CI (pass `-arsmiOrientation portrait` or `landscape` to match the menu):
+For CI (pass `-arsmiOrientation landscape`, `portrait` or `auto` to match the menu):
 
 ```
 Unity.exe -quit -batchmode -projectPath . \

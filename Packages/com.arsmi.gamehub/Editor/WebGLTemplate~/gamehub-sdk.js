@@ -32,7 +32,7 @@
    * version from here is compared against the platform's own at handshake. Bump it whenever
    * the wire protocol changes.
    */
-  var SDK_VERSION = "2.1.0";
+  var SDK_VERSION = "2.2.0";
 
   /**
    * The wire protocol this SDK speaks, and the only number that answers whether a game and
@@ -142,6 +142,33 @@
    * It can never contradict the platform: it only runs when there is no platform, and anything
    * it produces is labelled source:"local". Do not make the host call this.
    */
+  /**
+   * Which way the frame is: "portrait" or "landscape".
+   *
+   * A guess, made from whatever the environment answers, and replaced by the platform's own at
+   * handshake. It exists for the same reason guessDevice() does: a game asking which way it is
+   * being held and getting undefined has to write a guard, and every game would write the same
+   * one. A frame with no measurable size is called landscape, which is what a desktop browser
+   * and a headless context both are.
+   */
+  function guessOrientation() {
+    try {
+      if (typeof window === "undefined") return "landscape";
+      if (typeof window.matchMedia === "function") {
+        var mq = window.matchMedia("(orientation: portrait)");
+        if (mq && typeof mq.matches === "boolean") return mq.matches ? "portrait" : "landscape";
+      }
+      var w = Number(window.innerWidth) || 0;
+      var h = Number(window.innerHeight) || 0;
+      if (w && h) return h > w ? "portrait" : "landscape";
+    } catch (_e) { /* a context that answers nothing is a landscape one */ }
+    return "landscape";
+  }
+
+  function readOrientation(value) {
+    return value === "portrait" || value === "landscape" ? value : null;
+  }
+
   function guessDevice() {
     var nav = typeof navigator !== "undefined" ? navigator : null;
     var ua = nav && nav.userAgent ? String(nav.userAgent) : "";
@@ -218,7 +245,7 @@
     this.destroyed = false;
     // Guessed now so it is never null, and overwritten by the platform's better answer at
     // handshake. See guessDevice() for why the two are allowed to be different code.
-    this.context = { preview: false, device: guessDevice() };
+    this.context = { preview: false, device: guessDevice(), orientation: guessOrientation() };
     this._declaredDevices = [];
 
     // Acks. `_outSeq` numbers what we send; `_unityAcks` parks the id of a message we have
@@ -282,6 +309,13 @@
     var self = this;
 
     this._onInternal("gamehub:capabilities:get", function () { self._reportCapabilities(); });
+    // A rotation reaches the game as gamehub:screen:set — the platform resizing the frame,
+    // which is exactly what turning a phone does. Registered here rather than in the message
+    // handler so it runs BEFORE the game's own subscription: a game reading getOrientation()
+    // from inside its screen:set handler must see the orientation it is being told about, not
+    // the one from before. Internal, so it does not answer the fullscreen wiring check for a
+    // game that never subscribed itself.
+    this._onInternal("gamehub:screen:set", function (payload) { self._onScreenSet(payload); });
     this._onInternal(ACK, function (payload) { self._onHostAck(payload); });
     this.challenge = {
       ready: function (payload) { self.emit("gamehub:challenge:ready", payload || {}); },
@@ -1246,6 +1280,54 @@
   };
 
   /**
+   * Which way the frame is right now: "portrait" or "landscape". Never null.
+   *
+   * On a phone this is how the player is holding it, and it changes when they turn it. It is
+   * NOT the orientation the game was uploaded as — a game already knows how it was built, and
+   * the platform no longer forces the screen to match it.
+   */
+  GameHubSDK.prototype.getOrientation = function () {
+    return this.context.orientation || guessOrientation();
+  };
+
+  /**
+   * Fires with the current orientation, then again each time the frame turns.
+   *
+   * Fires immediately, unlike onConnection: there is always an answer here, because the SDK
+   * guesses one before the handshake rather than leaving a game with undefined.
+   *
+   * Returns an unsubscribe function.
+   */
+  GameHubSDK.prototype.onOrientation = function (handler) {
+    var self = this;
+    var last = this.getOrientation();
+    var unsubscribe = this.on("gamehub:context", function () {
+      var now = self.getOrientation();
+      if (now === last) return;   // a context re-dispatch is not a rotation
+      last = now;
+      handler(now);
+    });
+    handler(last);
+    return unsubscribe;
+  };
+
+  /**
+   * The frame changed. Adopt a new orientation if one came with it.
+   *
+   * Silent when nothing turned: the host sends this on every fullscreen change too, and a game
+   * that re-laid-out for each of those would be re-laying-out for rotations that never
+   * happened. Re-dispatching the context is what carries the news to onContext subscribers —
+   * which includes Unity's .jslib, so a build compiled before any of this existed hears a
+   * rotation without being rebuilt.
+   */
+  GameHubSDK.prototype._onScreenSet = function (payload) {
+    var next = readOrientation(isObject(payload) ? payload.orientation : null);
+    if (!next || next === this.context.orientation) return;
+    this.context.orientation = next;
+    this._dispatch("gamehub:context", this.getContext());
+  };
+
+  /**
    * Fires with the current device, then again if the platform's answer differs from the guess
    * the SDK made before the handshake. Payload: { type, input, source }.
    */
@@ -1268,7 +1350,9 @@
         gameId: typeof data.gameId === "string" ? data.gameId : undefined,
         slug: typeof data.slug === "string" ? data.slug : undefined,
         embedType: typeof data.embedType === "string" ? data.embedType : undefined,
-        orientation: typeof data.orientation === "string" ? data.orientation : undefined,
+        // The frame's orientation, which on a phone is how the player is holding it. A host
+        // too old to send one leaves the local guess standing rather than blanking it.
+        orientation: readOrientation(data.orientation) || this.context.orientation || guessOrientation(),
         // A host that sends nothing, or nonsense, leaves the local guess standing. A game must
         // never read device.type and get undefined — that would put a guard in every game.
         device: readHostDevice(data.device) || this.context.device || guessDevice(),

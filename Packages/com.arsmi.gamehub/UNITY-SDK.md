@@ -172,6 +172,34 @@ that only fired on change would be missed by nearly every game.
 
 Subscribing claims nothing: this is not one of the wiring checks the publish gate reads.
 
+## Which way the frame is
+
+There is no typed C# accessor for this yet. The orientation arrives on the context, which
+`OnContext` already delivers as raw JSON — so a build compiled against any 4.x package hears a
+rotation without being rebuilt:
+
+```csharp
+GameHubBridge.Instance.OnContext += json =>
+{
+    // json carries "orientation": "portrait" | "landscape"
+    if (json.Contains("\"orientation\":\"portrait\"")) LayOutPortrait();
+    else                                              LayOutLandscape();
+};
+```
+
+On a phone this is **how the player is holding it**, and `OnContext` fires again each time they
+turn it. It is not the orientation you uploaded the game as: the platform used to lock the
+phone to that value and no longer does, so the frame fills the screen whichever way the device
+is held and the game adapts.
+
+**Your build has to be willing to adapt too.** *Arsmi Games → Build WebGL…* stamps an
+orientation into `index.html` and the template locks the canvas to that shape, so a build made
+as Landscape stays 16:9 inside a portrait frame with black bars above and below — correct, but
+fixed. Pick **Auto** (4.5.6) instead and the canvas takes the shape of the window, so the game
+is portrait on an upright phone and landscape on a turned one. Only choose it if your game
+genuinely lays out both ways; a landscape-only game built as Auto gets squeezed rather than
+letterboxed.
+
 ## Identity
 
 ```csharp

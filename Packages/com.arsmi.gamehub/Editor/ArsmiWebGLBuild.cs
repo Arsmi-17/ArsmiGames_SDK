@@ -33,6 +33,20 @@ namespace ArsmiGames.EditorTools
     {
         Landscape,
         Portrait,
+
+        /// <summary>
+        /// Whichever way the player is holding the device.
+        ///
+        /// For a game that genuinely plays either way up. The canvas takes the shape of the
+        /// window rather than a fixed one, so an upright phone gets a portrait game and the
+        /// same phone turned gets a landscape one — handled entirely by a media query in the
+        /// WebGL template, with nothing to run at build time or at play time.
+        ///
+        /// Only choose it if your game actually lays out both ways. A landscape-only game
+        /// built as Auto will be squeezed into a portrait frame on a phone, which is worse
+        /// than the black bars the lock would have given it.
+        /// </summary>
+        Auto,
     }
 
     public class ArsmiWebGLBuildProcessor : IPreprocessBuildWithReport, IPostprocessBuildWithReport
@@ -245,8 +259,15 @@ namespace ArsmiGames.EditorTools
         /// <summary>What the menu (or -arsmiOrientation) last asked for. Landscape if never asked.</summary>
         public static Orientation ChosenOrientation()
         {
-            return EditorPrefs.GetString(OrientationKey, nameof(Orientation.Landscape)) == nameof(Orientation.Portrait)
-                ? Orientation.Portrait
+            // Parsed rather than compared, so adding a shape to the enum does not need a new
+            // branch here. Landscape remains what an unset or unreadable pref means: it is what
+            // every build made before Auto existed got, and a default that changed under a
+            // developer would reshape their next build without their asking.
+            return Enum.TryParse<Orientation>(
+                EditorPrefs.GetString(OrientationKey, nameof(Orientation.Landscape)),
+                ignoreCase: true,
+                out var stored)
+                ? stored
                 : Orientation.Landscape;
         }
 
@@ -348,7 +369,7 @@ namespace ArsmiGames.EditorTools
 
         /// <summary>
         /// For CI: Unity.exe -quit -batchmode -executeMethod ArsmiGames.EditorTools.ArsmiBuild.BuildFromCommandLine
-        /// -arsmiOutput &lt;folder&gt; [-arsmiOrientation portrait|landscape]
+        /// -arsmiOutput &lt;folder&gt; [-arsmiOrientation portrait|landscape|auto]
         /// </summary>
         public static void BuildFromCommandLine()
         {
@@ -370,7 +391,7 @@ namespace ArsmiGames.EditorTools
             {
                 if (!Enum.TryParse<Orientation>(orientation, ignoreCase: true, out var parsed))
                 {
-                    Debug.LogError($"[Arsmi] -arsmiOrientation must be 'portrait' or 'landscape', not '{orientation}'.");
+                    Debug.LogError($"[Arsmi] -arsmiOrientation must be 'landscape', 'portrait' or 'auto', not '{orientation}'.");
                     EditorApplication.Exit(1);
                     return;
                 }

@@ -70,18 +70,33 @@
       /*
         Orientation lock.
 
-        The post-processor stamps data-orientation on <html> (landscape or portrait). Those
-        two numbers turn it into an aspect ratio; the canvas is then locked to that shape and
-        centred, and a window of a different shape shows black bars rather than stretching the
-        game. This is what makes a portrait build stay portrait on a landscape screen.
+        The post-processor stamps data-orientation on <html> (landscape, portrait or auto).
+        Those two numbers turn it into an aspect ratio; the canvas is then locked to that shape
+        and centred, and a window of a different shape shows black bars rather than stretching
+        the game. This is what makes a portrait build stay portrait on a landscape screen.
 
         Without this the canvas filled 100% x 100% of the window, so the game took whatever
         shape the window was — a portrait game ran landscape on a desktop.
 
-        If your game is not 16:9 / 9:16 (say it is 3:4), change the matching pair below.
+        `auto` is the third choice, for a game that genuinely plays either way up: it takes the
+        shape of the window instead of a fixed one, so a phone held upright gets a portrait
+        game and the same phone turned gets a landscape one. It is a media query rather than a
+        resize listener on purpose — the browser re-evaluates it on rotation by itself, the
+        canvas relocks through the same min() below, and Unity matches its framebuffer to the
+        new rendered size exactly as it does for the other two. There is nothing to run and so
+        nothing that can fail to run.
+
+        If your game is not 16:9 / 9:16 (say it is 3:4), change the matching pairs below.
       */
       html               { --ar-w:16; --ar-h:9;  }   /* default / landscape */
       html[data-orientation="portrait"] { --ar-w:9; --ar-h:16; }
+      html[data-orientation="auto"]     { --ar-w:16; --ar-h:9; }
+
+      @media (orientation: portrait) {
+        /* Only `auto` follows the device. A build that declared a shape keeps it — turning the
+           phone must not turn a portrait game into a landscape one. */
+        html[data-orientation="auto"]   { --ar-w:9; --ar-h:16; }
+      }
 
       #unity-container{
         position:fixed;inset:0;

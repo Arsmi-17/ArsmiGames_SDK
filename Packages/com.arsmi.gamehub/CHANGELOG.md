@@ -5,6 +5,41 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.6] - 2026-08-29
+
+### Added
+
+- **Auto, a third orientation in Build WebGL…** — for a game that genuinely plays either way up.
+  The canvas takes the shape of the window instead of a fixed one, so a phone held upright plays
+  the game portrait and the same phone turned plays it landscape.
+
+  The platform has accepted `auto` as a game's declared orientation for some time. Until now
+  nothing could build one: the window offered Landscape and Portrait only, and whichever you
+  picked was stamped into `index.html` and locked the canvas to that shape. A developer who
+  declared their game auto at upload still shipped a build that could not adapt.
+
+  It is one media query in the WebGL template. The browser re-evaluates it on rotation by
+  itself, the canvas relocks through the same `min()` the other two shapes use, and Unity
+  matches its framebuffer to the new rendered size exactly as it already does — so there is
+  nothing to run at play time and nothing that can fail to run.
+
+  ```
+  -arsmiOrientation auto      # and in CI
+  ```
+
+### Notes
+
+- **Landscape is still the default.** A default that changed under you would reshape your next
+  build without your asking.
+- Only pick Auto if your game really does lay out both ways. A landscape-only game built as Auto
+  is squeezed into the portrait frame rather than letterboxed inside it — worse than the black
+  bars the lock would have given it.
+- `gamehub:unity:ready` reports `auto` for such a build. That event is the build answering for
+  what it was made for, so it names what it is rather than a shape it does not have.
+- `ChosenOrientation()` now parses the stored preference instead of comparing it to one name.
+  The old form mapped anything that was not `Portrait` to `Landscape`, so a third shape would
+  have silently built the second one.
+
 ## [4.5.5] - 2026-08-29
 
 ### Added

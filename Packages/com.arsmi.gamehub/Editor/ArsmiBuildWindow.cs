@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -277,17 +278,29 @@ namespace ArsmiGames.EditorTools
         {
             EditorGUILayout.LabelField("Orientation", EditorStyles.boldLabel);
 
+            // Driven off the enum rather than hand-numbered buttons: the old code mapped index
+            // 1 to Portrait and everything else to Landscape, so adding a third shape there
+            // would have silently built the second one.
+            var choices = (Orientation[])Enum.GetValues(typeof(Orientation));
+            var labels = choices.Select(o => o.ToString()).ToArray();
             var current = ArsmiWebGLBuildProcessor.ChosenOrientation();
-            var index = current == Orientation.Portrait ? 1 : 0;
-            var next = GUILayout.Toolbar(index, new[] { "Landscape", "Portrait" });
-            if (next != index)
+            var index = Array.IndexOf(choices, current);
+            if (index < 0) index = 0;
+
+            var next = GUILayout.Toolbar(index, labels);
+            if (next != index && next >= 0 && next < choices.Length)
             {
-                var chosen = next == 1 ? Orientation.Portrait : Orientation.Landscape;
-                EditorPrefs.SetString(ArsmiWebGLBuildProcessor.OrientationKey, chosen.ToString());
+                EditorPrefs.SetString(ArsmiWebGLBuildProcessor.OrientationKey, choices[next].ToString());
             }
 
             EditorGUILayout.LabelField(
-                "Written into index.html; the platform sizes the frame around the game to match.",
+                current == Orientation.Auto
+                    ? "Auto: the game takes the shape of the window, so a phone held upright plays it " +
+                      "portrait and the same phone turned plays it landscape. Only pick this if your game " +
+                      "genuinely lays out both ways — a landscape-only game will be squeezed into the " +
+                      "portrait frame rather than letterboxed inside it."
+                    : "Written into index.html; the canvas is locked to this shape, and a window of a " +
+                      "different shape gets black bars rather than a stretched game.",
                 EditorStyles.wordWrappedMiniLabel);
         }
 
