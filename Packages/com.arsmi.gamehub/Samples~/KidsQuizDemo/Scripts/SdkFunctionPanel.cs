@@ -63,6 +63,15 @@ namespace ArsmiGames.Demo
             DemoUI.Section(col, "Ads (platform overlay)");
             DemoUI.Btn(col, "Show rewarded ad", () => { Log("→ ad:show"); Hub()?.ShowRewardedAd("sdk-panel"); },
                        new Color(DemoUI.Gold.r, DemoUI.Gold.g, DemoUI.Gold.b, 0.16f), DemoUI.Gold, 46, 16);
+            // This console action simulates a completed level for SDK/QA testing.
+            // A real game calls it only after gameplay has stopped.
+            DemoUI.Btn(col, "Test completed-level ad break", () => {
+                var hub = Hub();
+                if (hub == null || !hub.Connection.Preview) { Log("The test ad-break button is available in upload preview only."); return; }
+                Log("→ ad:break (level-complete)");
+                hub.CommercialBreak("level-complete");
+            },
+                       null, null, 46, 16);
 
             // No "set balance" button on purpose, and no API behind one either. The game can
             // read the wallet and ask to spend from it; it cannot decide what is in it. Coins
@@ -144,6 +153,8 @@ namespace ArsmiGames.Demo
             // The ad pays out in YOUR currency, not in Flux — so there is no balance to report.
             hub.OnAdFinished += rewarded =>
                 Log(rewarded ? "← ad:rewarded — grant your own reward" : "← ad:dismissed");
+            hub.OnCommercialBreakFinished += (shown, reason) =>
+                Log($"← ad:break-finished ({(shown ? "shown" : reason ?? "not shown")})");
             hub.OnWalletChanged += balance => Log($"← wallet:state — {balance} flux");
             hub.OnWalletError += message => Log($"← wallet:error — {message}");
             // Subscribing is what tells the platform you handle fullscreen at all — it will

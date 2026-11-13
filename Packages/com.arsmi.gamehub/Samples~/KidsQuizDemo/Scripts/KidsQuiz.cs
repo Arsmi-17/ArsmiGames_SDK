@@ -79,6 +79,7 @@ namespace ArsmiGames.Demo
         private int _best;
         private bool _answered;
         private bool _hintShown;
+        private bool _waitingForBreak;
 
         public void Build(Transform parent, ArsmiSave save, SdkFunctionPanel console)
         {
@@ -138,6 +139,7 @@ namespace ArsmiGames.Demo
             {
                 hub.OnAdStarted += () => _console?.Log("ad started — platform overlay is up");
                 hub.OnAdFinished += OnAdFinished;
+                hub.OnCommercialBreakFinished += OnCommercialBreakFinished;
             }
 
             // Follow what the PLATFORM published this game as, rather than assuming.
@@ -229,10 +231,10 @@ namespace ArsmiGames.Demo
                 _optionLabels[i].text = question.Options[i];
                 _optionLabels[i].color = DemoUI.Text;
                 _optionButtons[i].GetComponent<Image>().color = DemoUI.PanelSoft;
-                _optionButtons[i].interactable = !_answered;
+                _optionButtons[i].interactable = !_answered && !_waitingForBreak;
             }
 
-            if (_hintButton != null) _hintButton.interactable = !_answered && !_hintShown;
+            if (_hintButton != null) _hintButton.interactable = !_answered && !_hintShown && !_waitingForBreak;
         }
 
         private void ShowAdForHint()
@@ -273,7 +275,7 @@ namespace ArsmiGames.Demo
 
         private void Answer(int choice)
         {
-            if (_answered) return;
+            if (_answered || _waitingForBreak) return;
             _answered = true;
 
             var question = Questions[_index];
@@ -316,6 +318,8 @@ namespace ArsmiGames.Demo
 
         private void Next()
         {
+            if (_waitingForBreak) return;
+            var completedRun = _answered && _index == Questions.Length - 1;
             _index = (_index + 1) % Questions.Length;
             if (_index == 0) _score = 0; // wrapped around: fresh run
 
@@ -329,7 +333,22 @@ namespace ArsmiGames.Demo
 
             _answered = false;
             _hintShown = false;
-            _feedback.text = "";
+            _waitingForBreak = completedRun;
+            _feedback.text = completedRun ? "Round complete. Checking for an ad break…" : "";
+            Render();
+            if (completedRun)
+            {
+                var hub = GameHubBridge.Instance;
+                if (hub != null) hub.CommercialBreak("session-complete");
+                else OnCommercialBreakFinished(false, "no-platform");
+            }
+        }
+
+        private void OnCommercialBreakFinished(bool shown, string reason)
+        {
+            _waitingForBreak = false;
+            _feedback.text = shown ? "Ad break complete. Next round ready." : "Next round ready.";
+            _console?.Log($"← ad:break-finished ({(shown ? "shown" : reason ?? "not shown")})");
             Render();
         }
 

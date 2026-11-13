@@ -90,6 +90,7 @@ public class GameHubBridge : MonoBehaviour
             $"\"user\":{Bool(OnUserChanged != null)}," +
             $"\"wallet\":{Bool(OnWalletChanged != null)}," +
             $"\"ads\":{Bool(OnAdFinished != null)}," +
+            $"\"commercialBreak\":{Bool(OnCommercialBreakFinished != null)}," +
             $"\"leaderboard\":{Bool(_definedLeaderboard)}," +
             $"\"pocket\":{Bool(OnPocketInput != null)}" +
             "}";
@@ -971,6 +972,42 @@ public class GameHubBridge : MonoBehaviour
     /// the player's Flux balance at all.</summary>
     public event System.Action<bool> OnAdFinished;
 
+    /// <summary>Called after a natural game break, including no-fill. Never grants a reward.
+    /// Keep the game paused until this event fires, then resume.</summary>
+    public event System.Action<bool, string> OnCommercialBreakFinished;
+    private string _pendingCommercialBreakId;
+
+    /// <summary>Offer the platform a safe level or session completion. Never call during play.</summary>
+    public void CommercialBreak(string reason = "level-complete")
+    {
+        if (reason != "level-complete" && reason != "session-complete")
+        {
+            OnCommercialBreakFinished?.Invoke(false, "invalid-break");
+            return;
+        }
+        if (_pendingCommercialBreakId != null)
+        {
+            OnCommercialBreakFinished?.Invoke(false, "already-showing");
+            return;
+        }
+        _pendingCommercialBreakId = System.Guid.NewGuid().ToString("N");
+        var json = $"{{\"requestId\":\"{_pendingCommercialBreakId}\",\"reason\":\"{reason}\"}}";
+#if UNITY_WEBGL && !UNITY_EDITOR
+        GameHubBridge_Emit("gamehub:ad:break", json);
+#else
+        _pendingCommercialBreakId = null;
+        OnCommercialBreakFinished?.Invoke(false, "editor");
+#endif
+    }
+
+    public void OnGameHubAdBreakResult(string json)
+    {
+        var requestId = ReadJsonString(json, "requestId");
+        if (string.IsNullOrEmpty(_pendingCommercialBreakId) || requestId != _pendingCommercialBreakId) return;
+        _pendingCommercialBreakId = null;
+        OnCommercialBreakFinished?.Invoke(ReadJsonBool(json, "shown"), ReadJsonString(json, "reason"));
+    }
+
     public void ShowRewardedAd(string placement = "game")
     {
         var json = $"{{\"type\":\"rewarded\",\"placement\":\"{Escape(placement)}\"}}";
@@ -1003,8 +1040,8 @@ public class GameHubBridge : MonoBehaviour
     ///
     /// This is what a game with its own backend keys its records on. It is derived
     /// from the platform user and the game, so it is stable forever for this player
-    /// here, and two games cannot compare ids to work out they have the same person.
-    /// Never use the raw platform user id for that.</summary>
+    /// here. The identifier itself is not comparable across games; email and the
+    /// raw user id in the web payload can still identify the same player.</summary>
     public string PlayerId { get; private set; }
 
     public string DisplayName { get; private set; }
@@ -1013,24 +1050,30 @@ public class GameHubBridge : MonoBehaviour
 
     /// <summary>The player's email address, or null.
     ///
-    /// Null unless the platform granted this specific game the per-game email opt-in
-    /// AND the game keeps its progress on its own backend. Every other game — and
-    /// every guest — sees null here forever, so treat it as a bonus and never as a
-    /// login key: <see cref="PlayerId"/> is the identifier that is always present.
-    ///
-    /// The address arrived in the user-state JSON before this property existed and was
-    /// silently discarded, so a Unity game appeared to be denied something the web SDK
-    /// was already handing out.</summary>
+    /// Supplied for signed-in players when this game calls RequestUserState().
+    /// Guests receive null. Use PlayerId for records in backend save mode.</summary>
     public string Email { get; private set; }
 
-    /// <summary>Whether the platform granted this game the email opt-in. Lets a game
-    /// tell "not shared with you" from "this player has no address on file" — both of
-    /// which leave <see cref="Email"/> null.</summary>
+    /// <summary>True when the identity reply contained an email address.</summary>
     public bool EmailShared { get; private set; }
 
-    /// <summary>Fires whenever the platform reports who is playing — including the
-    /// moment a guest signs in mid-session.</summary>
+    /// <summary>Fires when a requested identity reply arrives.</summary>
     public event System.Action OnUserChanged;
+
+    /// <summary>Fires with sign-in status only. RequestUserState() to refresh profile fields.</summary>
+    public event System.Action<bool> OnAuthChanged;
+
+    public void OnGameHubAuthChanged(string json)
+    {
+        LoggedIn = ReadJsonBool(json, "loggedIn");
+        PlayerId = null;
+        Username = null;
+        DisplayName = null;
+        AvatarPath = null;
+        Email = null;
+        EmailShared = false;
+        OnAuthChanged?.Invoke(LoggedIn);
+    }
 
     public void OnGameHubUserState(string json)
     {

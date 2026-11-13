@@ -102,6 +102,12 @@ mergeInto(LibraryManager.library, {
       window.GameHubBridge.on("gamehub:ad:state", function (payload) {
         window.__gameHubUnitySend("OnGameHubAdState", payload);
       });
+      window.GameHubBridge.on("gamehub:ad:break-result", function (payload) {
+        window.__gameHubUnitySend("OnGameHubAdBreakResult", payload);
+      });
+      window.GameHubBridge.on("gamehub:auth:changed", function (payload) {
+        window.__gameHubUnitySend("OnGameHubAuthChanged", payload);
+      });
 
       // The save is requested by the SDK itself, from setEngine("unity") / create({engine}) —
       // see _askForSave in gamehub-sdk.js. It deliberately does NOT happen here: this file is

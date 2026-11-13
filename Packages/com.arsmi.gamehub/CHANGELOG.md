@@ -5,6 +5,27 @@ All notable changes to this package are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.7] - 2026-11-14
+
+### Added
+
+- **Ads at natural game breaks.** Call `CommercialBreak("level-complete")` or
+  `CommercialBreak("session-complete")` after play has stopped, then resume from
+  `OnCommercialBreakFinished(bool shown, string reason)`. The platform decides whether a
+  campaign is due; no-fill, cooldown, and disabled ads all return a result without a reward.
+- **Request-only player identity.** `RequestUserState()` asks for the current player profile and
+  email. `OnAuthChanged` reports a sign-in change without pushing profile data; games request
+  a fresh profile when they need it.
+- The Kids Quiz sample offers a game break after a completed round and includes a preview-only
+  button for testing the level-complete path during upload QA.
+
+### Changed
+
+- The WebGL template includes the updated web bridge for request-only identity and separate
+  rewarded and game-break ad results. Both paths remain on wire protocol 2.
+- The integration guide explains that an ad never starts from a timer during active play. The
+  game marks a safe break; the platform controls timing and may skip it.
+
 ## [4.5.6] - 2026-08-29
 
 ### Added

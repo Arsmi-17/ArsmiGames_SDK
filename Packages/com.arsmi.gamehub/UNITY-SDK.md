@@ -205,15 +205,30 @@ letterboxed.
 ```csharp
 string PlayerId      // pseudonymous, stable for this player in THIS game, not comparable across games
 string Username, DisplayName, AvatarPath
-string Email         // null unless the per-game email opt-in was granted AND you save to your own backend
-bool   EmailShared   // which of those two a null Email means
+string Email         // sent for a signed-in player after RequestUserState()
+bool   EmailShared   // true when an email address was returned
 event Action OnUserChanged
+event Action<bool> OnAuthChanged // sign-in status only; request a fresh profile when needed
 void RequestUserState(string game = "")
 void RequestLogin(string reason = "game")
 ```
 
-Key your own backend records on `PlayerId`. Never build login on `Email`: it is null for most
-games and for every guest, and it is not yours to assume.
+Call `RequestUserState()` when identity is needed; the platform does not push identity on
+load or sign-in changes. Key your own backend records on `PlayerId`. Guests have no email.
+
+## Ads at game breaks
+
+Enable **Ads at game breaks** in the upload form. Pause after a completed level or session,
+then call `CommercialBreak("level-complete")` or `CommercialBreak("session-complete")`.
+Resume from `OnCommercialBreakFinished(bool shown, string reason)` whether an ad played or
+not. The platform waits at least two minutes after game readiness and three minutes between
+ads, and may return no-fill. This callback never grants a reward or Flux Coins. Keep rewarded
+ads on the separate `ShowRewardedAd()` / `OnAdFinished` path.
+
+The platform does not start an ad from a timer alone; your game marks the safe break and the
+platform decides whether an ad is due. Upload QA checks `CommercialBreak()` and
+`ShowRewardedAd()` separately when each option is enabled. If both are enabled, trigger both
+in preview. A no-fill result still proves the game made the request.
 
 ## Device (4.5.4)
 
@@ -454,7 +469,7 @@ back, not a second spin and not a second charge.
    the `.jslib` acks `handled:true` for every Unity build regardless.
 
 The platform reports what you wired up one frame into the first scene, as a JSON object with
-one boolean per requirement: `mute`, `fullscreen`, `data`, `user`, `wallet`, `ads`,
+one boolean per requirement: `mute`, `fullscreen`, `data`, `user`, `wallet`, `ads`, `commercialBreak`,
 `leaderboard`, and, since package 4.1.0, `pocket` — true only when `OnPocketInput` has a
 subscriber. If you subscribe later than that, call `ReportWiring()` yourself afterwards or you
 will be assessed as not handling what you actually handle.

@@ -230,10 +230,11 @@ subscription is real evidence). Silence never counts as a pass.
 | **Connection** (4.5.5) | Optional | `OnConnection += c => …` → fires once there is an answer: `c.Connected` true on the platform, false with `c.Reason` `"standalone"` or `"editor"` when there is no host. | Nothing to send. `IsConnected`, `ConnectionKnown` and `Connection` read the same answer; subscribing late fires immediately. |
 | **Mute** | **Required** | `OnMuteChanged` → zero **all** audio (`AudioListener.volume = 0`). Subscribing acks it. | `SetMuted(true)` when your own sliders all reach 0; `false` when any rises. Skip if you have no volume UI. |
 | **Fullscreen** | **Required** | `OnFullscreenChanged` → subscribe to ack; re-fit only if you drive layout from code. | `RequestFullscreen()` — **only** if your game already has a fullscreen button. Do not add one. |
-| **Identity** | Required for **own-backend** save | `OnUserChanged` → read `hub.PlayerId` and key saves on it. `hub.Email` is null unless your game was granted it — never key on it. | `RequestUserState()` to ask for it. |
+| **Identity** | Required for **own-backend** save | `OnAuthChanged` reports sign-in status; `OnUserChanged` follows a requested profile. Key saves on `hub.PlayerId`. Signed-in players also provide `hub.Email` after a request. | `RequestUserState()` when your game needs the profile. |
 | **Save (Platform)** | Required if published **Platform save** | Re-read through `GetInt/GetString` after a change; do not cache stale values. | `SetInt/SetString` (or `ArsmiSave`). **Never store currency in a save** — it is on the player's machine and editable. |
 | **Wallet (Flux)** | Only if you sell for Flux | `OnWalletChanged` → update your HUD; `OnWalletError` → show the reason. | `WalletGet()` to read; `WalletSpend(n, reason)` to spend, and wait for `OnWalletChanged` before granting. **A game cannot earn Flux** — `WalletSet` was removed and the platform refuses it. |
 | **Rewarded ad** | Optional | `OnAdStarted` → pause; `OnAdFinished(rewarded)` → resume. | `ShowRewardedAd(id)`. Grant **your own** reward only when `rewarded` is true. **An ad pays no Flux.** |
+| **Game-break ad** (4.5.7) | Optional | `OnCommercialBreakFinished(shown, reason)` → resume even when no ad filled. | `CommercialBreak("level-complete")` or `"session-complete"` after play stops. The platform controls whether an ad is due. |
 | **Leaderboard** | Optional | Nothing to handle — the platform owns the share UI. | `LeaderboardScore(score, metricKey, …)`; keep `metricKey`/`sortDirection` consistent. |
 | **Achievements** | — | — | **Removed.** No manifest, no progress, **no Flux reward.** Track them in your own game and currency. |
 
@@ -381,6 +382,20 @@ hub.ShowRewardedAd("quiz-hint");
 ```
 
 `rewarded: false` means the player skipped it or it failed. Grant nothing.
+
+### Ads at game breaks
+
+Enable **Automatic ads at game breaks** for the game. At a completed level or session, stop
+gameplay, call the bridge, and resume from the result in every case:
+
+```csharp
+hub.OnCommercialBreakFinished += (shown, reason) => ResumeGame();
+hub.CommercialBreak("level-complete");
+```
+
+The platform waits at least two minutes after the game becomes ready and three minutes
+between shown ads. It may skip a break or return no-fill. It never starts an ad from a
+timer while the player is actively playing. This result never grants a reward or Flux Coins.
 
 ## Mute
 

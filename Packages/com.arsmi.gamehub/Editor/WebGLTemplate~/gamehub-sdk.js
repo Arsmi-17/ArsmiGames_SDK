@@ -253,6 +253,10 @@
     this._outSeq = 0;
     this._unityAcks = {};
     this._dispatchErrors = 0;
+    this._user = null;
+    this._userRequestId = null;
+    this._userFetch = null;
+    this._authKnown = false;
 
     // The SDK version the platform that served us is on, learnt at handshake, and whether
     // we are behind it. Null until bridge:init arrives, and stays null when the host is
@@ -291,6 +295,7 @@
       user: false,        // reads who the player is (needed for own-backend saves)
       wallet: false,
       ads: false,
+      commercialBreak: false,
       leaderboard: false,
       pocket: false,      // subscribed to gamehub:pocket:input (a phone as controller)
     };
@@ -638,7 +643,7 @@
     //
     // (The platform has its own "watch an ad for Flux" button in its UI. That one is the
     // platform's, the player starts it deliberately, and it has nothing to do with a game.)
-    this._ad = { pending: null };
+    this._ad = { pending: null, breakPending: null, breakTimer: null, breakId: 0 };
     this._onInternal("gamehub:ad:state", function (payload) {
       payload = payload || {};
       var status = String(payload.status || "");
@@ -654,6 +659,17 @@
       };
       self._dispatch("gamehub:ad:finished", result);
       if (resolve) resolve(result);
+    });
+    this._onInternal("gamehub:ad:break-result", function (payload) {
+      payload = payload || {};
+      var pending = self._ad.breakPending;
+      if (!pending || String(payload.requestId || "") !== pending.id) return;
+      self._ad.breakPending = null;
+      if (self._ad.breakTimer) clearTimeout(self._ad.breakTimer);
+      self._ad.breakTimer = null;
+      var result = { shown: !!payload.shown, reason: payload.reason || null };
+      self._dispatch("gamehub:ad:break-finished", result);
+      pending.resolve(result);
     });
 
     this.ads = {
@@ -673,8 +689,32 @@
         self.emit("gamehub:ad:show", Object.assign({ type: "rewarded" }, payload || {}));
         return new Promise(function (resolve) { self._ad.pending = resolve; });
       },
+      /** Call only after a level or session has ended. Resume after this promise settles. */
+      commercialBreak: function (reason) {
+        self._wire("commercialBreak");
+        if (self._ad.breakPending || self._ad.pending) return Promise.resolve({ shown: false, reason: "already-showing" });
+        var safeReason = typeof reason === "string" ? reason : reason && reason.reason;
+        if (safeReason !== "level-complete" && safeReason !== "session-complete") {
+          return Promise.resolve({ shown: false, reason: "invalid-break" });
+        }
+        var id = "break-" + (++self._ad.breakId);
+        return new Promise(function (resolve) {
+          self._ad.breakPending = { id: id, resolve: resolve };
+          self._ad.breakTimer = setTimeout(function () {
+            var pending = self._ad.breakPending;
+            if (!pending || pending.id !== id) return;
+            self._ad.breakPending = null;
+            self._ad.breakTimer = null;
+            var result = { shown: false, reason: "timeout" };
+            self._dispatch("gamehub:ad:break-finished", result);
+            resolve(result);
+          }, 150000);
+          self.emit("gamehub:ad:break", { requestId: id, reason: safeReason });
+        });
+      },
       onStarted: function (handler) { return self.on("gamehub:ad:started", handler); },
       onFinished: function (handler) { return self.on("gamehub:ad:finished", handler); },
+      onBreakFinished: function (handler) { return self.on("gamehub:ad:break-finished", handler); },
     };
 
     /**
@@ -685,23 +725,70 @@
      *   email, emailShared
      * }
      *
-     * `playerId` is the one to key your own records on: pseudonymous, stable for this
-     * player in this game, and deliberately NOT comparable across games.
-     *
-     * `email` is null unless the platform granted this game the per-game email opt-in
-     * and the game saves to its own backend — so it is null for most games, and for
-     * every guest. `emailShared` tells you which of those two it is. Never build login
-     * on it; it can be null forever and is not yours to assume.
+     * get() reads the last requested profile. fetch() explicitly requests a fresh
+     * profile and email from the platform. Guests receive no email. In backend
+     * save mode, playerId is scoped to this game. userId and email can identify
+     * the same player across games.
      */
     this.user = {
       get: function () {
         return Object.assign({ loggedIn: self._save.loggedIn }, self._user || {});
       },
+      fetch: function () {
+        if (self.destroyed) return Promise.reject(new Error("GameHub SDK was destroyed."));
+        if (self._userFetch) return self._userFetch.promise;
+        var pending = {};
+        pending.promise = new Promise(function (resolve, reject) {
+          pending.resolve = resolve;
+          pending.reject = reject;
+        });
+        self._userFetch = pending;
+        var id = self.emit("gamehub:user:get", {});
+        pending.id = id;
+        pending.timer = setTimeout(function () {
+          if (self._userFetch !== pending) return;
+          self._userFetch = null;
+          self._userRequestId = null;
+          pending.reject(new Error("Player identity request timed out."));
+        }, 8000);
+        return pending.promise;
+      },
       onChange: function (handler) { return self.on("gamehub:user:state", handler); },
+      onAuthChange: function (handler) { return self.on("gamehub:auth:changed", handler); },
     };
     this._onInternal("gamehub:user:state", function (payload) {
-      self._user = payload || {};
+      var next = Object.assign({}, payload || {});
+      delete next.requestId;
+      self._user = next;
       self._save.loggedIn = !!(payload && payload.loggedIn);
+      self._authKnown = true;
+      var pending = self._userFetch;
+      if (pending && pending.id === payload.requestId) {
+        clearTimeout(pending.timer);
+        self._userFetch = null;
+        pending.resolve(self.user.get());
+      }
+    });
+    this._onInternal("gamehub:user:error", function (payload) {
+      var pending = self._userFetch;
+      if (!pending || pending.id !== payload.requestId) return;
+      clearTimeout(pending.timer);
+      self._userFetch = null;
+      pending.reject(new Error(String(payload.message || "Player identity is unavailable.")));
+    });
+    this._onInternal("gamehub:auth:changed", function (payload) {
+      if (self._authKnown || self._user) {
+        self._user = null;
+        self._userRequestId = null;
+        var pending = self._userFetch;
+        if (pending) {
+          clearTimeout(pending.timer);
+          self._userFetch = null;
+          pending.reject(new Error("Player sign-in changed during identity request."));
+        }
+      }
+      self._authKnown = true;
+      self._save.loggedIn = !!payload.loggedIn;
     });
 
     // Closing the tab must not cost the player the last few seconds of play.
@@ -937,6 +1024,17 @@
 
   GameHubSDK.prototype.destroy = function () {
     this.destroyed = true;
+    this._userRequestId = null;
+    if (this._userFetch) {
+      clearTimeout(this._userFetch.timer);
+      this._userFetch.reject(new Error("GameHub SDK was destroyed."));
+      this._userFetch = null;
+    }
+    if (this._ad && this._ad.breakTimer) clearTimeout(this._ad.breakTimer);
+    if (this._ad && this._ad.breakPending) {
+      this._ad.breakPending.resolve({ shown: false, reason: "destroyed" });
+      this._ad.breakPending = null;
+    }
     this.handlers = {};
     if (this._connectionTimer) {
       clearTimeout(this._connectionTimer);
@@ -1038,6 +1136,7 @@
     "gamehub:user:state": "user",
     "gamehub:wallet:changed": "wallet",
     "gamehub:ad:finished": "ads",
+    "gamehub:ad:break-finished": "commercialBreak",
     "gamehub:leaderboard:sharing": "leaderboard",
     "gamehub:audio:muted": "mute",
     "gamehub:pocket:input": "pocket",
@@ -1165,6 +1264,11 @@
       return null;
     }
     var id = "g" + (++this._outSeq);
+    if (event === "gamehub:user:get") {
+      this._userRequestId = id;
+      payload = Object.assign({}, payload || {}, { requestId: id });
+      this._wire("user");
+    }
     this._send(BRIDGE_EVENT, { id: id, event: event, name: event, payload: payload || {} });
     return id;
   };
@@ -1356,16 +1460,6 @@
         // A host that sends nothing, or nonsense, leaves the local guess standing. A game must
         // never read device.type and get undefined — that would put a guard in every game.
         device: readHostDevice(data.device) || this.context.device || guessDevice(),
-        testUser: isObject(data.testUser)
-          ? {
-              id: String(data.testUser.id || "preview-user"),
-              username: typeof data.testUser.username === "string" ? data.testUser.username : undefined,
-              displayName: typeof data.testUser.displayName === "string" ? data.testUser.displayName : undefined,
-              email: typeof data.testUser.email === "string" ? data.testUser.email : null,
-              test: data.testUser.test === true,
-              local: data.testUser.local === true,
-            }
-          : undefined,
       };
       // What SDK the platform itself is on. An older host does not send this at all, so
       // "no answer" means "cannot tell", not "you are current".
@@ -1424,6 +1518,11 @@
     }
     var eventType = data.type === BRIDGE_EVENT && typeof data.event === "string" ? data.event : data.type;
     var payload = data.type === BRIDGE_EVENT && isObject(data.payload) ? data.payload : data;
+    // Identity is accepted only as the answer to this game's latest request.
+    if (eventType === "gamehub:user:state" || eventType === "gamehub:user:error") {
+      if (!payload.requestId || payload.requestId !== this._userRequestId) return;
+      this._userRequestId = null;
+    }
 
     // Reset before the top-level dispatch, not inside it: handling gamehub:audio:set runs a nested
     // dispatch of gamehub:audio:muted, and a throw in the game's mute handler happens down
